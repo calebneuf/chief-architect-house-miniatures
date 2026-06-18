@@ -1,0 +1,18 @@
+services:
+  mesh-worker:
+    image: ghcr.io/calebneuf/chief-architect-house-miniatures-mesh-worker:latest
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  web:
+    image: ghcr.io/calebneuf/chief-architect-house-miniatures-web:latest
+    ports:
+      - "3000:3000"
+    environment:
+      MESH_WORKER_URL: http://mesh-worker:8000
+    depends_on:
+      mesh-worker:
+        condition: service_healthy

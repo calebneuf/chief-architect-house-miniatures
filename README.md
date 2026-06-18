@@ -36,6 +36,23 @@ Open [http://localhost:3000](http://localhost:3000).
 docker compose up --build
 ```
 
+### Pre-built images (GHCR)
+
+On every push to `main`, GitHub Actions publishes:
+
+- `ghcr.io/calebneuf/chief-architect-house-miniatures-web:latest`
+- `ghcr.io/calebneuf/chief-architect-house-miniatures-mesh-worker:latest`
+
+Pull and run without building locally:
+
+```bash
+docker compose -f docker-compose.ghcr.yml up -d
+```
+
+Change the host port in `docker-compose.ghcr.yml` if `3000` is taken, e.g. `"3080:3000"`.
+
+**First-time setup:** After the first publish, open each package on GitHub → **Packages** → **Package settings** → set visibility to **Public** so Unraid/Dockge can pull without logging in.
+
 ## Processing pipeline
 
 1. Load STL or OBJ
@@ -72,5 +89,7 @@ python scripts/tune_samples.py
 apps/web/                 Next.js frontend
 services/mesh-worker/     Python mesh processing API
 samples/                  Generated synthetic house meshes
-docker-compose.yml        Local full-stack dev
+docker-compose.yml        Local full-stack dev (build from source)
+docker-compose.ghcr.yml   Pull pre-built images from GHCR
+.github/workflows/        CI: publish Docker images on push to main
 ```
