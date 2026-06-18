@@ -3,6 +3,10 @@ from __future__ import annotations
 import numpy as np
 import trimesh
 
+from pipeline.log import get_logger
+
+logger = get_logger(__name__)
+
 
 def cull_interior_walls(
     mesh: trimesh.Trimesh,
@@ -18,6 +22,12 @@ def cull_interior_walls(
         return mesh, 0
 
     visible_faces = _exterior_visible_faces(mesh, ray_count=ray_count)
+    logger.debug(
+        "Exterior visibility: %d / %d faces visible (%d rays)",
+        int(visible_faces.sum()),
+        len(mesh.faces),
+        ray_count,
+    )
     if not visible_faces.any():
         return mesh, 0
 

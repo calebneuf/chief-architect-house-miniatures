@@ -53,6 +53,26 @@ Change the host port in `docker-compose.ghcr.yml` if `3000` is taken, e.g. `"308
 
 **First-time setup:** After the first publish, open each package on GitHub → **Packages** → **Package settings** → set visibility to **Public** so Unraid/Dockge can pull without logging in.
 
+### Dockge / Unraid troubleshooting
+
+If **mesh-worker shows unhealthy** in Dockge:
+
+1. Open the mesh-worker container **Logs** first. Look for Python import errors or out-of-memory kills.
+2. Wait **up to 90 seconds** after start. The worker loads heavy mesh libraries and needs a longer health-check grace period.
+3. Pull the latest `mesh-worker` image and redeploy the stack.
+4. From Unraid terminal, test manually:
+   ```bash
+   docker ps
+   docker logs <mesh-worker-container-name>
+   curl http://localhost:8000/health
+   ```
+   (Only works if port `8000` is published on the mesh-worker service.)
+
+If the web UI says **Mesh worker is unavailable** but the container is running:
+
+- Confirm both containers are in the **same Dockge stack** so `http://mesh-worker:8000` resolves.
+- Confirm the web service has `MESH_WORKER_URL=http://mesh-worker:8000`.
+
 ## Processing pipeline
 
 1. Load STL or OBJ

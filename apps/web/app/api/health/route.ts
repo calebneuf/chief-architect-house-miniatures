@@ -3,7 +3,12 @@ import { NextResponse } from "next/server";
 const MESH_WORKER_URL =
   process.env.MESH_WORKER_URL ?? "http://localhost:8000";
 
+function log(...args: unknown[]) {
+  console.log("[api/health]", ...args);
+}
+
 export async function GET() {
+  log("checking worker at", MESH_WORKER_URL);
   try {
     const response = await fetch(`${MESH_WORKER_URL}/health`, {
       cache: "no-store",

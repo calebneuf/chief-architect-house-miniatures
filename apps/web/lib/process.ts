@@ -17,6 +17,14 @@ const STAGE_LABELS: Record<ProcessingStage, string> = {
   error: "Processing failed.",
 };
 
+const DEBUG = process.env.NODE_ENV !== "production";
+
+function debugLog(...args: unknown[]) {
+  if (DEBUG) {
+    console.log("[miniature-prep]", ...args);
+  }
+}
+
 export function stageLabel(stage: ProcessingStage): string {
   return STAGE_LABELS[stage];
 }
@@ -70,16 +78,19 @@ function toAppError(payload: ApiErrorPayload, statusCode: number): AppError {
 }
 
 export async function processModel(file: File): Promise<ProcessResponse> {
+  debugLog("processModel:start", { name: file.name, bytes: file.size });
   const formData = new FormData();
   formData.append("file", file);
 
   let response: Response;
   try {
+    debugLog("processModel:POST /api/process");
     response = await fetch("/api/process", {
       method: "POST",
       body: formData,
     });
   } catch (cause) {
+    debugLog("processModel:network-error", cause);
     throw new ProcessRequestError({
       title: "Could not reach the web API",
       message: "The browser failed to contact /api/process.",
@@ -104,8 +115,15 @@ export async function processModel(file: File): Promise<ProcessResponse> {
   }
 
   if (!response.ok) {
+    debugLog("processModel:api-error", response.status, payload);
     throw new ProcessRequestError(toAppError(payload, response.status));
   }
+
+  debugLog("processModel:complete", {
+    facesBefore: payload.facesBefore,
+    facesAfter: payload.facesAfter,
+    processingMs: payload.processingMs,
+  });
 
   return {
     stlBase64: payload.stlBase64 ?? "",
@@ -119,8 +137,10 @@ export async function processModel(file: File): Promise<ProcessResponse> {
 
 export async function checkWorkerHealth(): Promise<{ online: boolean; detail: string }> {
   try {
+    debugLog("health:check");
     const response = await fetch("/api/health", { cache: "no-store" });
     const payload = await response.json();
+    debugLog("health:response", response.status, payload);
     if (!response.ok) {
       return {
         online: false,

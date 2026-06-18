@@ -56,6 +56,7 @@ export default function HomePage() {
   const busy = stage !== "idle" && stage !== "done" && stage !== "error";
 
   const setFailure = (nextError: AppError, atStage: ProcessingStage) => {
+    console.error("[miniature-prep] failed at", atStage, nextError);
     setStage("error");
     setFailedStage(atStage);
     setError(nextError);
@@ -81,15 +82,19 @@ export default function HomePage() {
 
     try {
       currentStage = "uploading";
+      console.log("[miniature-prep] stage: uploading", file.name, file.size);
       setStage("uploading");
       currentStage = "analyzing";
+      console.log("[miniature-prep] stage: analyzing");
       setStage("analyzing");
       currentStage = "culling";
+      console.log("[miniature-prep] stage: culling (waiting for mesh worker…)");
       setStage("culling");
 
       const result = await processModel(file);
 
       currentStage = "exporting";
+      console.log("[miniature-prep] stage: exporting", result);
       setStage("exporting");
       const processedObjectUrl = base64ToBlobUrl(result.stlBase64, "model/stl");
       const downloadableUrl = base64ToBlobUrl(result.stlBase64, "model/stl");
@@ -104,6 +109,7 @@ export default function HomePage() {
         processingMs: result.processingMs,
       });
       setStage("done");
+      console.log("[miniature-prep] stage: done");
     } catch (processingError) {
       if (processingError instanceof ProcessRequestError) {
         setFailure(processingError.appError, currentStage);

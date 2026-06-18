@@ -3,7 +3,12 @@ import { NextRequest, NextResponse } from "next/server";
 const MESH_WORKER_URL =
   process.env.MESH_WORKER_URL ?? "http://localhost:8000";
 
+function log(...args: unknown[]) {
+  console.log("[api/process]", ...args);
+}
+
 export async function POST(request: NextRequest) {
+  log("request received");
   const formData = await request.formData();
   const file = formData.get("file");
 
@@ -14,6 +19,8 @@ export async function POST(request: NextRequest) {
   const workerFormData = new FormData();
   workerFormData.append("file", file, file.name);
 
+  log("forwarding to worker", MESH_WORKER_URL, "file=", file.name, "bytes=", file.size);
+
   let response: Response;
   try {
     response = await fetch(`${MESH_WORKER_URL}/process`, {
@@ -22,16 +29,17 @@ export async function POST(request: NextRequest) {
     });
   } catch (cause) {
     const details = cause instanceof Error ? cause.message : "Connection failed";
+    log("worker unreachable:", details);
     return NextResponse.json(
       {
         error: "Mesh worker is unavailable.",
         code: "WORKER_UNREACHABLE",
         details: `Could not connect to ${MESH_WORKER_URL}. ${details}`,
         suggestions: [
-          "Start the mesh-worker container in Dockge and wait for it to become healthy.",
+          "Start the mesh-worker container in Dockge and wait up to 90 seconds for it to become healthy.",
+          "In Dockge, open mesh-worker logs. If the container is crash-looping, pull the latest image and redeploy.",
           "Confirm the web container has MESH_WORKER_URL=http://mesh-worker:8000.",
-          "Open mesh-worker logs and look for Python startup errors.",
-          "From the Unraid terminal, run: docker ps and verify both containers are up.",
+          "From Unraid terminal: docker logs chief-architect-house-miniatures-mesh-worker-1",
         ],
       },
       { status: 503 },
@@ -40,6 +48,7 @@ export async function POST(request: NextRequest) {
 
   const payload = await response.json();
   if (!response.ok) {
+    log("worker error", response.status, payload);
     const detail = payload.detail;
     const message =
       typeof detail === "string"
@@ -60,6 +69,12 @@ export async function POST(request: NextRequest) {
       { status: response.status },
     );
   }
+
+  log("worker success", {
+    facesBefore: payload.faces_before,
+    facesAfter: payload.faces_after,
+    processingMs: payload.processing_ms,
+  });
 
   return NextResponse.json({
     stlBase64: payload.stl_base64,

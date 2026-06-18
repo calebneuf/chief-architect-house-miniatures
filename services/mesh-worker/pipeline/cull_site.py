@@ -3,6 +3,10 @@ from __future__ import annotations
 import numpy as np
 import trimesh
 
+from pipeline.log import get_logger
+
+logger = get_logger(__name__)
+
 
 def detect_up_axis(mesh: trimesh.Trimesh) -> int:
     """
@@ -60,6 +64,7 @@ def cull_below_ground(mesh: trimesh.Trimesh, up_axis: int | None = None) -> tupl
     tolerance = max(span * 0.01, 1e-6)
 
     if len(components) > 1:
+        logger.debug("Below-ground: %d components, grade axis=%d", len(components), axis)
         horizontal_axes = [index for index in range(3) if index != axis]
 
         def footprint_area(component: trimesh.Trimesh) -> float:
@@ -68,6 +73,7 @@ def cull_below_ground(mesh: trimesh.Trimesh, up_axis: int | None = None) -> tupl
 
         main = max(components, key=footprint_area)
         grade = float(main.bounds[0][axis])
+        logger.debug("Below-ground grade level: %.3f", grade)
         kept: list[trimesh.Trimesh] = []
         removed = 0
 
@@ -116,6 +122,7 @@ def cull_exterior_clutter(
     outside the primary structure envelope.
     """
     components = mesh.split(only_watertight=False)
+    logger.debug("Exterior clutter check: %d components", len(components))
     if len(components) <= 1:
         return mesh, 0
 
