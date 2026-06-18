@@ -49,6 +49,16 @@ function fitCameraToObject(
   controls.update();
 }
 
+function getBoundingCenter(object: THREE.Object3D): THREE.Vector3 {
+  return new THREE.Box3().setFromObject(object).getCenter(new THREE.Vector3());
+}
+
+function alignObjectToReference(object: THREE.Object3D, reference: THREE.Object3D): void {
+  const referenceCenter = getBoundingCenter(reference);
+  const objectCenter = getBoundingCenter(object);
+  object.position.add(referenceCenter.clone().sub(objectCenter));
+}
+
 function disposeObject(object: THREE.Object3D) {
   object.traverse((child) => {
     if (child instanceof THREE.Mesh) {
@@ -313,22 +323,22 @@ export function WorkspaceCanvas({
       }
 
       const split = Math.min(0.92, Math.max(0.08, compareSplitRef.current));
-      const leftWidth = Math.floor(width * split);
-      const rightWidth = width - leftWidth;
+      const splitPx = Math.floor(width * split);
 
-      renderer.setScissorTest(true);
+      renderer.setViewport(0, 0, width, height);
+      renderer.setScissorTest(false);
       renderer.setClearColor(0xd9e1ea, 1);
+      renderer.clear(true, true, true);
 
-      renderer.setViewport(0, 0, leftWidth, height);
-      renderer.setScissor(0, 0, leftWidth, height);
-      leftMesh.visible = true;
-      rightMesh.visible = false;
-      renderer.render(scene, camera);
-
-      renderer.setViewport(leftWidth, 0, rightWidth, height);
-      renderer.setScissor(leftWidth, 0, rightWidth, height);
       leftMesh.visible = false;
       rightMesh.visible = true;
+      renderer.render(scene, camera);
+
+      renderer.setScissorTest(true);
+      renderer.setScissor(0, 0, splitPx, height);
+      renderer.clear(false, true, true);
+      leftMesh.visible = true;
+      rightMesh.visible = false;
       renderer.render(scene, camera);
 
       renderer.setScissorTest(false);
@@ -533,7 +543,9 @@ export function WorkspaceCanvas({
             disposeObject(previousMesh);
           }
           meshRef.current = displayRoot;
-          if (!compareMeshRef.current) {
+          if (compareMeshRef.current) {
+            alignObjectToReference(compareMeshRef.current, displayRoot);
+          } else if (!compareMeshRef.current) {
             fitCameraToObject(camera, controls, displayRoot);
           }
           if (!useCleanupSplit) {
@@ -630,9 +642,10 @@ export function WorkspaceCanvas({
         }
         compareMeshRef.current = loaded;
 
-        const fitTarget = meshRef.current ?? loaded;
-        if (!meshRef.current) {
-          fitCameraToObject(camera, controls, fitTarget);
+        if (meshRef.current) {
+          alignObjectToReference(loaded, meshRef.current);
+        } else {
+          fitCameraToObject(camera, controls, loaded);
         }
       })
       .catch((error) => {
@@ -643,6 +656,16 @@ export function WorkspaceCanvas({
   const hasSource = Boolean(source?.arrayBuffer || source?.url);
   const showCompareSlider = Boolean(compare && hasSource);
   const showCleanupHint = Boolean(cleanupMode && hasSource && !compare);
+
+  const updateCompareSplitFromPointer = (clientX: number) => {
+    const container = containerRef.current;
+    if (!container) {
+      return;
+    }
+    const rect = container.getBoundingClientRect();
+    const ratio = (clientX - rect.left) / rect.width;
+    onCompareSplitChange?.(Math.min(0.92, Math.max(0.08, ratio)));
+  };
 
   return (
     <div className="workspace-canvas">
@@ -665,18 +688,46 @@ export function WorkspaceCanvas({
         ) : null}
       </div>
       {showCompareSlider ? (
-        <div className="compare-controls">
-          <span className="muted tiny">Original</span>
-          <input
-            type="range"
-            min={8}
-            max={92}
-            value={Math.round(compareSplit * 100)}
-            onChange={(event) => onCompareSplitChange?.(Number(event.target.value) / 100)}
-            aria-label="Compare slider"
-          />
-          <span className="muted tiny">Processed</span>
-        </div>
+        <>
+          <div
+            className="compare-divider"
+            style={{ left: `${compareSplit * 100}%` }}
+            onPointerDown={(event) => {
+              event.preventDefault();
+              updateCompareSplitFromPointer(event.clientX);
+
+              const onMove = (moveEvent: PointerEvent) => {
+                updateCompareSplitFromPointer(moveEvent.clientX);
+              };
+              const onUp = () => {
+                window.removeEventListener("pointermove", onMove);
+                window.removeEventListener("pointerup", onUp);
+              };
+
+              window.addEventListener("pointermove", onMove);
+              window.addEventListener("pointerup", onUp);
+            }}
+            role="slider"
+            aria-label="Compare divider"
+            aria-valuemin={8}
+            aria-valuemax={92}
+            aria-valuenow={Math.round(compareSplit * 100)}
+          >
+            <span className="compare-divider-handle" />
+          </div>
+          <div className="compare-controls">
+            <span className="muted tiny">Original</span>
+            <input
+              type="range"
+              min={8}
+              max={92}
+              value={Math.round(compareSplit * 100)}
+              onChange={(event) => onCompareSplitChange?.(Number(event.target.value) / 100)}
+              aria-label="Compare slider"
+            />
+            <span className="muted tiny">Processed</span>
+          </div>
+        </>
       ) : null}
     </div>
   );

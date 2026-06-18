@@ -139,6 +139,19 @@ def test_sloped_roof_is_not_flat_block():
     # A flat block would have one dominant top Z; sloped roof produces spread.
     top_quartile = z_values[z_values >= np.percentile(z_values, 75)]
     assert float(top_quartile.max() - top_quartile.min()) > height_span * 0.04
+    assert float(solid.bounds[1][2]) >= float(mesh.bounds[1][2]) * 0.85
+
+
+def test_tall_roof_envelope_is_preserved():
+    walls = trimesh.creation.box(extents=(10, 8, 4))
+    walls.apply_translation((0, 0, 2))
+    peak = trimesh.creation.cone(radius=6, height=5, sections=4)
+    peak.apply_translation((0, 0, 6.5))
+    mesh = repair_mesh(trimesh.util.concatenate([walls, peak]))
+
+    solid = extrude_floor_plan_solid(mesh, cells_per_axis=72)
+
+    assert float(solid.bounds[1][2]) >= float(mesh.bounds[1][2]) * 0.82
 
 
 def test_process_mesh_bytes_round_trip():

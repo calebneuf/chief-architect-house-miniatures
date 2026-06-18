@@ -43,16 +43,9 @@ def detect_ceiling_level(
     ground_z: float,
     up_axis: int | None = None,
 ) -> float:
-    """Estimate the top of the printable living volume."""
+    """Top of the printable volume — use the full mesh envelope so roofs are kept."""
     axis = up_axis if up_axis is not None else detect_up_axis(mesh)
-    heights = mesh.triangles_center[:, axis]
-    margin = max(float(mesh.extents.max()) * 0.01, 1e-3)
-    above_ground = heights[heights >= ground_z + margin]
-    if len(above_ground) == 0:
-        return float(mesh.bounds[1][axis])
-
-    ceiling = float(np.percentile(above_ground, 95))
-    ceiling = min(ceiling, float(mesh.bounds[1][axis]))
+    ceiling = float(mesh.bounds[1][axis])
     logger.info("Ceiling level: %.3f (ground %.3f)", ceiling, ground_z)
     return ceiling
 

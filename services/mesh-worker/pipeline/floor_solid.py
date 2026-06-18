@@ -10,9 +10,9 @@ from pipeline.log import get_logger
 
 logger = get_logger(__name__)
 
-DEFAULT_CELLS_PER_AXIS = 128
-MIN_CELLS_PER_AXIS = 72
-MAX_CELLS_PER_AXIS = 180
+DEFAULT_CELLS_PER_AXIS = 160
+MIN_CELLS_PER_AXIS = 96
+MAX_CELLS_PER_AXIS = 240
 
 
 def extrude_floor_plan_solid(
@@ -65,7 +65,9 @@ def extrude_floor_plan_solid(
         horizontal_axes=horizontal_axes,
     )
 
-    solid = _extrude_footprint(
+    roof_heights = _smooth_roof_heights(roof_heights, footprint)
+
+    solid = _extrude_heightfield(
         footprint,
         roof_heights=roof_heights,
         pitch=pitch,
@@ -123,7 +125,7 @@ def _floor_footprint_mask(
     for face in mesh.faces:
         triangle = mesh.vertices[face]
         heights = triangle[:, up_axis]
-        if float(heights.max()) < ground_z or float(heights.min()) > ceiling_z:
+        if float(heights.max()) < ground_z:
             continue
 
         xs = triangle[:, ha0]
@@ -195,10 +197,26 @@ def _roof_height_grid(
     for index, (ix, iy) in enumerate(occupied_coords):
         candidates = [geometry_cap[ix, iy], ray_cap[index]]
         height = max(candidates)
-        height = min(height, ceiling_z + tolerance)
         roof[ix, iy] = max(height, ground_z + tolerance)
 
     return roof
+
+
+def _smooth_roof_heights(
+    roof_heights: np.ndarray,
+    footprint: np.ndarray,
+) -> np.ndarray:
+    """Blend column roof samples so the solid top is not a staircase of boxes."""
+    if not footprint.any():
+        return roof_heights
+
+    working = roof_heights.copy()
+    working[~footprint] = np.nan
+    filled = np.nan_to_num(working, nan=float(np.nanmin(working[footprint])))
+    smoothed = ndimage.gaussian_filter(filled, sigma=0.9, mode="nearest")
+    result = roof_heights.copy()
+    result[footprint] = smoothed[footprint]
+    return result
 
 
 def _geometry_roof_cap(
@@ -218,9 +236,10 @@ def _geometry_roof_cap(
     cap = np.full((nx, ny), ground_z, dtype=np.float64)
 
     points = np.vstack((mesh.triangles_center, mesh.vertices))
+    envelope_top = float(mesh.bounds[1][up_axis]) + tolerance
     for point in points:
         height = float(point[up_axis])
-        if height < ground_z + tolerance or height > ceiling_z + tolerance:
+        if height < ground_z + tolerance or height > envelope_top:
             continue
 
         ix = int((point[ha0] - origin[ha0]) / pitch)
@@ -277,7 +296,7 @@ def _ray_roof_cap(
     return caps
 
 
-def _extrude_footprint(
+def _extrude_heightfield(
     footprint: np.ndarray,
     roof_heights: np.ndarray,
     pitch: float,
@@ -286,38 +305,117 @@ def _extrude_footprint(
     up_axis: int,
     horizontal_axes: list[int],
 ) -> trimesh.Trimesh:
+    """Extrude footprint columns into one continuous heightfield solid."""
     ha0, ha1 = horizontal_axes
-    min_height = max(pitch * 0.25, 1e-4)
-    boxes: list[trimesh.Trimesh] = []
+    nx, ny = footprint.shape
+    corner_heights = _corner_heights(footprint, roof_heights, ground_z)
 
-    for ix in range(footprint.shape[0]):
-        for iy in range(footprint.shape[1]):
+    def world_point(ix: int, iy: int, height: float) -> np.ndarray:
+        point = origin.copy()
+        point[ha0] = origin[ha0] + ix * pitch
+        point[ha1] = origin[ha1] + iy * pitch
+        point[up_axis] = height
+        return point
+
+    def corner_active(ix: int, iy: int) -> bool:
+        for di in (0, -1):
+            for dj in (0, -1):
+                ci, cj = ix + di, iy + dj
+                if 0 <= ci < nx and 0 <= cj < ny and footprint[ci, cj]:
+                    return True
+        return False
+
+    vertices: list[np.ndarray] = []
+    faces: list[list[int]] = []
+    top_index: dict[tuple[int, int], int] = {}
+    bottom_index: dict[tuple[int, int], int] = {}
+
+    for ix in range(nx + 1):
+        for iy in range(ny + 1):
+            if not corner_active(ix, iy):
+                continue
+            top = len(vertices)
+            top_index[(ix, iy)] = top
+            vertices.append(world_point(ix, iy, float(corner_heights[ix, iy])))
+            bottom = len(vertices)
+            bottom_index[(ix, iy)] = bottom
+            vertices.append(world_point(ix, iy, ground_z))
+
+    for ix in range(nx):
+        for iy in range(ny):
             if not footprint[ix, iy]:
                 continue
+            quad = (
+                top_index[(ix, iy)],
+                top_index[(ix + 1, iy)],
+                top_index[(ix + 1, iy + 1)],
+                top_index[(ix, iy + 1)],
+            )
+            faces.append([quad[0], quad[1], quad[2]])
+            faces.append([quad[0], quad[2], quad[3]])
 
-            top_z = float(roof_heights[ix, iy])
-            if top_z - ground_z < min_height:
+            base = (
+                bottom_index[(ix, iy)],
+                bottom_index[(ix + 1, iy)],
+                bottom_index[(ix + 1, iy + 1)],
+                bottom_index[(ix, iy + 1)],
+            )
+            faces.append([base[0], base[2], base[1]])
+            faces.append([base[0], base[3], base[2]])
+
+    for ix in range(nx):
+        for iy in range(ny):
+            if not footprint[ix, iy]:
                 continue
+            edge_checks = (
+                (ix == 0 or not footprint[ix - 1, iy], (ix, iy), (ix, iy + 1)),
+                (ix + 1 >= nx or not footprint[ix + 1, iy], (ix + 1, iy), (ix + 1, iy + 1)),
+                (iy == 0 or not footprint[ix, iy - 1], (ix, iy), (ix + 1, iy)),
+                (iy + 1 >= ny or not footprint[ix, iy + 1], (ix, iy + 1), (ix + 1, iy + 1)),
+            )
+            for exposed, corner_a, corner_b in edge_checks:
+                if not exposed:
+                    continue
+                if corner_a not in top_index or corner_b not in top_index:
+                    continue
+                if corner_a not in bottom_index or corner_b not in bottom_index:
+                    continue
+                top_a = top_index[corner_a]
+                top_b = top_index[corner_b]
+                bottom_a = bottom_index[corner_a]
+                bottom_b = bottom_index[corner_b]
+                faces.append([top_a, top_b, bottom_a])
+                faces.append([top_b, bottom_b, bottom_a])
 
-            mins = origin.copy()
-            maxs = origin.copy()
-            mins[ha0] = origin[ha0] + ix * pitch
-            maxs[ha0] = mins[ha0] + pitch
-            mins[ha1] = origin[ha1] + iy * pitch
-            maxs[ha1] = mins[ha1] + pitch
-            mins[up_axis] = ground_z
-            maxs[up_axis] = top_z
-
-            extents = maxs - mins
-            center = (mins + maxs) / 2.0
-            box = trimesh.creation.box(extents=extents)
-            box.apply_translation(center)
-            boxes.append(box)
-
-    if not boxes:
+    if not vertices:
         raise ValueError("Footprint produced no solid geometry.")
 
-    if len(boxes) == 1:
-        return boxes[0]
+    mesh = trimesh.Trimesh(
+        vertices=np.asarray(vertices, dtype=np.float64),
+        faces=np.asarray(faces, dtype=np.int64),
+        process=False,
+    )
+    mesh.merge_vertices()
+    mesh.update_faces(mesh.nondegenerate_faces())
+    mesh.remove_unreferenced_vertices()
+    return mesh
 
-    return trimesh.util.concatenate(boxes)
+
+def _corner_heights(
+    footprint: np.ndarray,
+    roof_heights: np.ndarray,
+    ground_z: float,
+) -> np.ndarray:
+    nx, ny = footprint.shape
+    corners = np.full((nx + 1, ny + 1), ground_z, dtype=np.float64)
+    for ix in range(nx + 1):
+        for iy in range(ny + 1):
+            samples: list[float] = []
+            for di in (0, -1):
+                for dj in (0, -1):
+                    ci, cj = ix + di, iy + dj
+                    if 0 <= ci < nx and 0 <= cj < ny and footprint[ci, cj]:
+                        samples.append(float(roof_heights[ci, cj]))
+            if samples:
+                corners[ix, iy] = max(samples)
+    return corners

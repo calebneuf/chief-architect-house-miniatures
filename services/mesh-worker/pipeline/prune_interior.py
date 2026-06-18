@@ -6,6 +6,7 @@ from scipy.sparse import csgraph
 from scipy.sparse import lil_matrix
 
 from pipeline.cull_interior import _exterior_visible_faces, ray_count_for_mesh
+from pipeline.cull_site import detect_up_axis
 from pipeline.log import get_logger
 
 logger = get_logger(__name__)
@@ -39,6 +40,8 @@ def prune_interior_partitions(
     inset = _inset_bounds(main_bounds, fraction=0.04)
     span = float(np.max(main_bounds[1] - main_bounds[0]))
     thin_limit = max(span * 0.04, 1e-3)
+    up_axis = detect_up_axis(mesh)
+    roof_floor = float(main_bounds[1][up_axis] - span * 0.18)
 
     keep = np.ones(len(mesh.faces), dtype=bool)
     removed_faces = 0
@@ -52,6 +55,10 @@ def prune_interior_partitions(
         visible_count = int((visible_faces & component_mask).sum())
 
         if visible_count > 0:
+            continue
+
+        component_top = float(component_bounds[1][up_axis])
+        if component_top >= roof_floor:
             continue
 
         center = component_bounds.mean(axis=0)
