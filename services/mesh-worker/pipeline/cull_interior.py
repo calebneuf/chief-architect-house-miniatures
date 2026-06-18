@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import numpy as np
 import trimesh
+from scipy.sparse import csgraph
+from scipy.sparse import lil_matrix
 
 from pipeline.log import get_logger
 
@@ -11,47 +13,113 @@ logger = get_logger(__name__)
 def ray_count_for_mesh(face_count: int) -> int:
     """Use fewer exterior rays on very large meshes to keep processing practical."""
     if face_count > 2_000_000:
-        return 300
+        return 400
     if face_count > 1_000_000:
-        return 500
+        return 600
     if face_count > 500_000:
-        return 800
+        return 900
     return 1200
 
 
 def cull_interior_walls(
     mesh: trimesh.Trimesh,
     ray_count: int = 1200,
-    neighbor_expansion: int = 2,
+    min_visible_fraction: float = 0.22,
 ) -> tuple[trimesh.Trimesh, int]:
     """
-    Keep geometry visible from outside the building envelope.
+    Drop fully enclosed interior partitions while keeping exterior shells intact.
 
-    Interior partition walls are occluded by the exterior shell and removed.
+    Faces are grouped into connected components. A component is kept when it is
+    the main building shell (any exterior visibility) or when a large enough share
+    of its faces are directly visible from outside.
     """
     if len(mesh.faces) == 0:
         return mesh, 0
 
     visible_faces = _exterior_visible_faces(mesh, ray_count=ray_count)
+    keep_mask = _components_to_keep(
+        mesh,
+        visible_faces,
+        min_visible_fraction=min_visible_fraction,
+    )
     logger.debug(
-        "Exterior visibility: %d / %d faces visible (%d rays)",
+        "Exterior visibility: %d / %d faces directly visible (%d rays)",
         int(visible_faces.sum()),
         len(mesh.faces),
         ray_count,
     )
-    if not visible_faces.any():
+    logger.debug(
+        "Component keep mask retains %d / %d faces",
+        int(keep_mask.sum()),
+        len(mesh.faces),
+    )
+
+    if keep_mask.all():
         return mesh, 0
 
-    keep_mask = _expand_face_neighborhood(mesh, visible_faces, neighbor_expansion)
     culled = mesh.copy()
     culled.update_faces(keep_mask)
-
     removed_faces = int(len(mesh.faces) - keep_mask.sum())
     return culled, removed_faces
 
 
+def _components_to_keep(
+    mesh: trimesh.Trimesh,
+    visible_faces: np.ndarray,
+    min_visible_fraction: float,
+) -> np.ndarray:
+    labels = _face_component_labels(mesh)
+    keep = np.zeros(len(mesh.faces), dtype=bool)
+
+    component_sizes = np.bincount(labels)
+    dominant_components = {
+        int(index)
+        for index, size in enumerate(component_sizes)
+        if size >= component_sizes.max() * 0.35
+    }
+
+    for component_id in range(len(component_sizes)):
+        if component_sizes[component_id] == 0:
+            continue
+
+        component_mask = labels == component_id
+        visible_count = int((visible_faces & component_mask).sum())
+        visible_fraction = visible_count / int(component_mask.sum())
+
+        if component_id in dominant_components:
+            keep_component = visible_count > 0
+        else:
+            keep_component = visible_fraction >= min_visible_fraction
+
+        if keep_component:
+            keep[component_mask] = True
+
+        logger.debug(
+            "Component %d: faces=%d visible=%d (%.1f%%) dominant=%s keep=%s",
+            component_id,
+            int(component_mask.sum()),
+            visible_count,
+            visible_fraction * 100,
+            component_id in dominant_components,
+            keep_component,
+        )
+
+    return keep
+
+
+def _face_component_labels(mesh: trimesh.Trimesh) -> np.ndarray:
+    face_count = len(mesh.faces)
+    adjacency = lil_matrix((face_count, face_count), dtype=bool)
+    for face_a, face_b in mesh.face_adjacency:
+        adjacency[face_a, face_b] = True
+        adjacency[face_b, face_a] = True
+
+    _, labels = csgraph.connected_components(adjacency, directed=False)
+    return labels
+
+
 def _exterior_visible_faces(mesh: trimesh.Trimesh, ray_count: int) -> np.ndarray:
-    """Mark faces hit by outward rays cast from a sphere around the model."""
+    """Mark faces hit as the closest surface along inward rays from outside."""
     bounds = mesh.bounds
     center = bounds.mean(axis=0)
     radius = np.linalg.norm(bounds[1] - bounds[0]) * 0.6 + 1e-6
@@ -76,29 +144,6 @@ def _exterior_visible_faces(mesh: trimesh.Trimesh, ray_count: int) -> np.ndarray
         visible[closest] = True
 
     return visible
-
-
-def _expand_face_neighborhood(
-    mesh: trimesh.Trimesh,
-    seed_mask: np.ndarray,
-    depth: int,
-) -> np.ndarray:
-    """Grow the keep-set across adjacent faces on the same connected shell."""
-    if depth <= 0:
-        return seed_mask
-
-    expanded = seed_mask.copy()
-    adjacency = mesh.face_adjacency
-
-    for _ in range(depth):
-        next_mask = expanded.copy()
-        for face_a, face_b in adjacency:
-            if expanded[face_a] or expanded[face_b]:
-                next_mask[face_a] = True
-                next_mask[face_b] = True
-        expanded = next_mask
-
-    return expanded
 
 
 def _fibonacci_sphere(samples: int) -> np.ndarray:

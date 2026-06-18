@@ -11,6 +11,7 @@ from pipeline.export import export_stl
 from pipeline.load import FileType, load_mesh
 from pipeline.log import get_logger, log_step
 from pipeline.repair import remove_small_components, repair_mesh
+from pipeline.solidify import solidify_mesh
 
 logger = get_logger(__name__)
 
@@ -73,6 +74,15 @@ def process_mesh_bytes(data: bytes, file_type: FileType) -> ProcessResult:
     with log_step(logger, "remove small components"):
         mesh, small_removed = remove_small_components(mesh)
         logger.info("Removed %d small floating components", small_removed)
+
+    with log_step(logger, "solidify house"):
+        faces_before_solidify = len(mesh.faces)
+        mesh = solidify_mesh(mesh)
+        logger.info(
+            "Solidified mesh: %d -> %d faces",
+            faces_before_solidify,
+            len(mesh.faces),
+        )
 
     faces_removed = interior_removed + basement_removed
     components_removed = site_removed + small_removed

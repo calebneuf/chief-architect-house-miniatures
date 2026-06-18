@@ -11,6 +11,7 @@ from pipeline.export import export_stl
 from pipeline.load import load_mesh
 from pipeline.process import process_mesh_bytes
 from pipeline.repair import repair_mesh
+from pipeline.solidify import solidify_mesh
 
 
 def box_with_interior_wall() -> trimesh.Trimesh:
@@ -65,13 +66,33 @@ def test_cull_removes_occluded_interior_wall():
     assert faces_after > 0
 
 
+def test_cull_keeps_entire_exterior_shell_when_sparsely_sampled():
+  """Low ray counts must not carve holes in the exterior shell."""
+  mesh = repair_mesh(box_with_interior_wall())
+  for _ in range(3):
+      mesh = mesh.subdivide()
+  mesh = repair_mesh(mesh)
+
+  culled, removed = cull_interior_walls(mesh, ray_count=300)
+
+  assert removed > 0
+  assert len(culled.faces) >= len(mesh.faces) * 0.45
+
+
+def test_solidify_produces_watertight_mesh():
+    mesh = repair_mesh(box_with_interior_wall())
+    solid = solidify_mesh(mesh, voxels_per_axis=48)
+
+    assert len(solid.faces) > 0
+    assert solid.is_watertight
+
+
 def test_process_mesh_bytes_round_trip():
     mesh = box_with_interior_wall()
     stl_bytes = export_mesh(mesh)
 
     result = process_mesh_bytes(stl_bytes, "stl")
 
-    assert result.faces_after < result.faces_before
     assert result.faces_removed > 0
     assert len(result.stl_bytes) > 0
 
@@ -132,4 +153,5 @@ def test_process_removes_basement_and_fence():
     mesh = trimesh.util.concatenate([house_with_basement(), house_with_fence()])
 
     result = process_mesh_bytes(export_mesh(mesh), "stl")
-    assert result.faces_after < result.faces_before
+    assert result.components_removed > 0
+    assert result.faces_removed > 0
