@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
 
@@ -73,7 +74,8 @@ async def process(file: UploadFile = File(...)) -> ProcessResponse:
         logger.info("Importing mesh pipeline modules…")
         from pipeline.process import process_mesh_bytes
 
-        result = process_mesh_bytes(data, file_type)
+        # CPU-heavy work runs off the event loop so /health stays responsive.
+        result = await asyncio.to_thread(process_mesh_bytes, data, file_type)
     except ValueError as exc:
         logger.warning("Validation error: %s", exc)
         raise HTTPException(status_code=400, detail=str(exc)) from exc

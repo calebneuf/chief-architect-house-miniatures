@@ -11,7 +11,7 @@ const STAGE_LABELS: Record<ProcessingStage, string> = {
   idle: "Upload a Chief Architect STL or OBJ to begin.",
   uploading: "Sending your model to the server…",
   analyzing: "Reading geometry and preparing the mesh…",
-  culling: "Removing interior walls, basements, and exterior clutter…",
+  culling: "Removing interior walls, basements, and exterior clutter… Large files may take several minutes.",
   exporting: "Building the processed STL preview…",
   done: "Processing finished. Review the result in the workspace.",
   error: "Processing failed.",
@@ -50,9 +50,24 @@ function toAppError(payload: ApiErrorPayload, statusCode: number): AppError {
       suggestions: suggestions.length
         ? suggestions
         : [
+            "The worker may be busy on a large file — check mesh-worker logs first.",
             "Start the mesh-worker container in Dockge.",
-            "Confirm the web service has MESH_WORKER_URL=http://mesh-worker:8000.",
-            "Check mesh-worker logs for startup errors.",
+            "Confirm MESH_WORKER_URL=http://mesh-worker:8000 on the web service.",
+          ],
+      statusCode,
+    };
+  }
+
+  if (payload.code === "WORKER_TIMEOUT") {
+    return {
+      title: "Processing is taking too long",
+      message: payload.error,
+      details: payload.details,
+      suggestions: suggestions.length
+        ? suggestions
+        : [
+            "Check mesh-worker logs — processing may still be running.",
+            "Hide extra layers in Chief Architect to reduce export size.",
           ],
       statusCode,
     };

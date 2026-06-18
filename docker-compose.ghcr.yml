@@ -5,6 +5,7 @@ services:
     restart: unless-stopped
     environment:
       LOG_LEVEL: DEBUG
+    mem_limit: 6g
     healthcheck:
       test: ["CMD", "/app/scripts/healthcheck.sh"]
       interval: 15s

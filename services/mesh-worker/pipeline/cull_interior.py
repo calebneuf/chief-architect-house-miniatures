@@ -8,6 +8,17 @@ from pipeline.log import get_logger
 logger = get_logger(__name__)
 
 
+def ray_count_for_mesh(face_count: int) -> int:
+    """Use fewer exterior rays on very large meshes to keep processing practical."""
+    if face_count > 2_000_000:
+        return 300
+    if face_count > 1_000_000:
+        return 500
+    if face_count > 500_000:
+        return 800
+    return 1200
+
+
 def cull_interior_walls(
     mesh: trimesh.Trimesh,
     ray_count: int = 1200,

@@ -2,15 +2,34 @@ from __future__ import annotations
 
 import trimesh
 
+from pipeline.log import get_logger
+
+logger = get_logger(__name__)
+
+LARGE_MESH_FACE_COUNT = 250_000
+
 
 def repair_mesh(mesh: trimesh.Trimesh) -> trimesh.Trimesh:
     """Apply light repairs suitable for architectural exports."""
+    face_count = len(mesh.faces)
+    large_mesh = face_count > LARGE_MESH_FACE_COUNT
+    if large_mesh:
+        logger.info(
+            "Large mesh detected (%s faces): using fast repair path",
+            f"{face_count:,}",
+        )
+
     cleaned = mesh.copy()
     cleaned.merge_vertices()
     cleaned.update_faces(cleaned.unique_faces())
     cleaned.update_faces(cleaned.nondegenerate_faces())
     cleaned.remove_unreferenced_vertices()
-    cleaned.process(validate=True)
+
+    if large_mesh:
+        cleaned.process(validate=False)
+    else:
+        cleaned.process(validate=True)
+
     return cleaned
 
 

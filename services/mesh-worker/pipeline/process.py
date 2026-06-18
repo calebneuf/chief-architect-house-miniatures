@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 import trimesh
 
-from pipeline.cull_interior import cull_interior_walls
+from pipeline.cull_interior import cull_interior_walls, ray_count_for_mesh
 from pipeline.cull_site import cull_below_ground, cull_exterior_clutter, detect_up_axis
 from pipeline.export import export_stl
 from pipeline.load import FileType, load_mesh
@@ -48,7 +48,9 @@ def process_mesh_bytes(data: bytes, file_type: FileType) -> ProcessResult:
         logger.debug("After repair: faces=%d", len(mesh.faces))
 
     with log_step(logger, "cull interior walls"):
-        mesh, interior_removed = cull_interior_walls(mesh)
+        ray_count = ray_count_for_mesh(len(mesh.faces))
+        logger.info("Using %d exterior rays for %s faces", ray_count, f"{len(mesh.faces):,}")
+        mesh, interior_removed = cull_interior_walls(mesh, ray_count=ray_count)
         logger.info(
             "Interior cull removed %d faces (%d -> %d)",
             interior_removed,
