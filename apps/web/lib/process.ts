@@ -13,7 +13,7 @@ export const PROCESS_STEPS: { id: ProcessingStage; label: string }[] = [
   { id: "removing_site", label: "Remove site clutter" },
   { id: "slicing_floor", label: "Slice at ground floor" },
   { id: "pruning_interior", label: "Remove interior walls" },
-  { id: "extruding_solid", label: "Extrude floor plan to ceiling" },
+  { id: "extruding_solid", label: "Extrude to roof shape" },
   { id: "complete", label: "Finish export" },
 ];
 
@@ -26,7 +26,7 @@ const STAGE_LABELS: Record<ProcessingStage, string> = {
   slicing_floor: "Detecting ground floor and cutting off basements…",
   pruning_interior: "Removing interior partitions…",
   extruding_solid:
-    "Extruding the floor plan upward to the ceiling… Preview updates live.",
+    "Extruding the floor plan up to the roof surface… Preview updates live.",
   complete: "Packaging final STL…",
   done: "Processing finished. Review the result in the workspace.",
   error: "Processing failed.",

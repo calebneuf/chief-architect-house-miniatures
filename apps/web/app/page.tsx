@@ -25,6 +25,7 @@ export default function HomePage() {
   const [workerHealth, setWorkerHealth] = useState<WorkerHealth>("checking");
   const [workerDetail, setWorkerDetail] = useState("Checking connection…");
   const liveUrlRef = useRef<string | null>(null);
+  const [preserveLiveView, setPreserveLiveView] = useState(false);
 
   useEffect(() => {
     return () => {
@@ -66,11 +67,13 @@ export default function HomePage() {
   };
 
   const updateLivePreview = (stlBase64: string) => {
+    const isFollowUpPreview = Boolean(liveUrlRef.current);
     const nextLiveUrl = base64ToBlobUrl(stlBase64, "model/stl");
     if (liveUrlRef.current) {
       URL.revokeObjectURL(liveUrlRef.current);
     }
     liveUrlRef.current = nextLiveUrl;
+    setPreserveLiveView(isFollowUpPreview);
     setLiveUrl(nextLiveUrl);
     setViewMode("live");
   };
@@ -81,6 +84,7 @@ export default function HomePage() {
     setStats(null);
     setFileName(file.name);
     setViewMode("original");
+    setPreserveLiveView(false);
 
     if (originalUrl) URL.revokeObjectURL(originalUrl);
     if (processedUrl) URL.revokeObjectURL(processedUrl);
@@ -209,6 +213,7 @@ export default function HomePage() {
               : fileName ?? undefined
         }
         label={activeLabel}
+        preserveView={viewMode === "live" && preserveLiveView}
       />
     </div>
   );

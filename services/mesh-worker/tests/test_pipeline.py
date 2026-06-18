@@ -51,6 +51,18 @@ def house_with_fence() -> trimesh.Trimesh:
     return trimesh.util.concatenate([house, fence])
 
 
+def shed_roof_house() -> trimesh.Trimesh:
+    """Box walls with a single sloped roof plane."""
+    walls = trimesh.creation.box(extents=(10, 8, 4))
+    walls.apply_translation((0, 0, 2))
+    roof = trimesh.creation.box(extents=(10.4, 8.4, 0.25))
+    roof.apply_transform(
+        trimesh.transformations.rotation_matrix(np.radians(22), [1, 0, 0])
+    )
+    roof.apply_translation((0, 0, 4.4))
+    return trimesh.util.concatenate([walls, roof])
+
+
 def ca_style_panelized_house() -> trimesh.Trimesh:
     """Many disconnected wall panels like a Chief Architect export."""
     parts = []
@@ -116,6 +128,17 @@ def test_floor_plan_extrusion_is_solid_block():
 
     assert len(solid.faces) > 0
     assert np.allclose(solid.extents[:2], mesh.extents[:2], rtol=0.12)
+
+
+def test_sloped_roof_is_not_flat_block():
+    mesh = repair_mesh(shed_roof_house())
+    solid = extrude_floor_plan_solid(mesh, cells_per_axis=56)
+
+    z_values = solid.vertices[:, 2]
+    height_span = float(z_values.max() - z_values.min())
+    # A flat block would have one dominant top Z; sloped roof produces spread.
+    top_quartile = z_values[z_values >= np.percentile(z_values, 75)]
+    assert float(top_quartile.max() - top_quartile.min()) > height_span * 0.04
 
 
 def test_process_mesh_bytes_round_trip():

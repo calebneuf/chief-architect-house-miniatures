@@ -10,6 +10,8 @@ type WorkspaceCanvasProps = {
   url?: string | null;
   fileName?: string;
   label?: string;
+  /** Keep orbit/zoom when the model URL changes (live preview updates). */
+  preserveView?: boolean;
 };
 
 function fitCameraToObject(
@@ -31,11 +33,65 @@ function fitCameraToObject(
   controls.update();
 }
 
-export function WorkspaceCanvas({ url, fileName, label }: WorkspaceCanvasProps) {
+function disposeObject(object: THREE.Object3D) {
+  object.traverse((child) => {
+    if (child instanceof THREE.Mesh) {
+      child.geometry.dispose();
+      if (Array.isArray(child.material)) {
+        child.material.forEach((item) => item.dispose());
+      } else {
+        child.material.dispose();
+      }
+    }
+  });
+}
+
+function loadModel(
+  url: string,
+  fileName: string | undefined,
+  material: THREE.MeshStandardMaterial,
+): Promise<THREE.Object3D> {
+  const lower = (fileName ?? url).toLowerCase();
+
+  return new Promise((resolve, reject) => {
+    if (lower.endsWith(".obj")) {
+      new OBJLoader().load(url, resolve, undefined, reject);
+      return;
+    }
+
+    new STLLoader().load(
+      url,
+      (geometry) => {
+        geometry.computeVertexNormals();
+        resolve(new THREE.Mesh(geometry, material));
+      },
+      undefined,
+      reject,
+    );
+  });
+}
+
+const LIVE_FADE_MS = 220;
+
+export function WorkspaceCanvas({
+  url,
+  fileName,
+  label,
+  preserveView = false,
+}: WorkspaceCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const sceneRef = useRef<THREE.Scene | null>(null);
+  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
+  const controlsRef = useRef<OrbitControls | null>(null);
+  const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
+  const meshRef = useRef<THREE.Object3D | null>(null);
+  const materialRef = useRef<THREE.MeshStandardMaterial | null>(null);
+  const frameIdRef = useRef(0);
+  const loadIdRef = useRef(0);
+  const fadeRafRef = useRef(0);
 
   useEffect(() => {
-    if (!url || !containerRef.current) {
+    if (!containerRef.current) {
       return;
     }
 
@@ -44,7 +100,6 @@ export function WorkspaceCanvas({ url, fileName, label }: WorkspaceCanvasProps) 
     scene.background = new THREE.Color(0xd9e1ea);
 
     const grid = new THREE.GridHelper(40, 40, 0xb8c3cf, 0xc7d0db);
-    grid.position.y = 0;
     scene.add(grid);
 
     const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 10000);
@@ -70,9 +125,11 @@ export function WorkspaceCanvas({ url, fileName, label }: WorkspaceCanvasProps) 
       roughness: 0.82,
     });
 
-    let mesh: THREE.Object3D | null = null;
-    let frameId = 0;
-    let disposed = false;
+    sceneRef.current = scene;
+    cameraRef.current = camera;
+    controlsRef.current = controls;
+    rendererRef.current = renderer;
+    materialRef.current = material;
 
     const resize = () => {
       const { clientWidth, clientHeight } = container;
@@ -85,56 +142,123 @@ export function WorkspaceCanvas({ url, fileName, label }: WorkspaceCanvasProps) 
     };
 
     const animate = () => {
-      frameId = window.requestAnimationFrame(animate);
+      frameIdRef.current = window.requestAnimationFrame(animate);
       controls.update();
       renderer.render(scene, camera);
     };
 
-    const lower = (fileName ?? url).toLowerCase();
-    const onLoaded = (object: THREE.Object3D) => {
-      if (disposed) {
-        return;
-      }
-      mesh = object;
-      scene.add(mesh);
-      fitCameraToObject(camera, controls, mesh);
-      resize();
-      animate();
-    };
-
-    if (lower.endsWith(".obj")) {
-      new OBJLoader().load(url, onLoaded);
-    } else {
-      new STLLoader().load(url, (geometry) => {
-        geometry.computeVertexNormals();
-        onLoaded(new THREE.Mesh(geometry, material));
-      });
-    }
-
     resize();
+    animate();
     window.addEventListener("resize", resize);
 
     return () => {
-      disposed = true;
-      window.cancelAnimationFrame(frameId);
+      window.cancelAnimationFrame(frameIdRef.current);
+      window.cancelAnimationFrame(fadeRafRef.current);
       window.removeEventListener("resize", resize);
       controls.dispose();
       renderer.dispose();
-      if (mesh) {
-        mesh.traverse((child) => {
+      if (meshRef.current) {
+        disposeObject(meshRef.current);
+        meshRef.current = null;
+      }
+      material.dispose();
+      container.removeChild(renderer.domElement);
+      sceneRef.current = null;
+      cameraRef.current = null;
+      controlsRef.current = null;
+      rendererRef.current = null;
+      materialRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    const scene = sceneRef.current;
+    const camera = cameraRef.current;
+    const controls = controlsRef.current;
+    const material = materialRef.current;
+
+    if (!url || !scene || !camera || !controls || !material) {
+      if (meshRef.current && scene) {
+        scene.remove(meshRef.current);
+        disposeObject(meshRef.current);
+        meshRef.current = null;
+      }
+      return;
+    }
+
+    const loadId = loadIdRef.current + 1;
+    loadIdRef.current = loadId;
+    const previousMesh = meshRef.current;
+
+    void loadModel(url, fileName, material)
+      .then((loaded) => {
+        if (loadIdRef.current !== loadId) {
+          disposeObject(loaded);
+          return;
+        }
+
+        const shouldPreserveView = preserveView && previousMesh !== null;
+        const fadeMaterial = material.clone();
+        fadeMaterial.transparent = true;
+        fadeMaterial.depthWrite = false;
+
+        loaded.traverse((child) => {
           if (child instanceof THREE.Mesh) {
-            child.geometry.dispose();
-            if (Array.isArray(child.material)) {
-              child.material.forEach((item) => item.dispose());
-            } else {
-              child.material.dispose();
-            }
+            child.material = fadeMaterial;
           }
         });
-      }
-      container.removeChild(renderer.domElement);
+
+        scene.add(loaded);
+
+        if (!shouldPreserveView) {
+          if (previousMesh) {
+            scene.remove(previousMesh);
+            disposeObject(previousMesh);
+          }
+          meshRef.current = loaded;
+          fitCameraToObject(camera, controls, loaded);
+          fadeMaterial.opacity = 1;
+          fadeMaterial.transparent = false;
+          fadeMaterial.depthWrite = true;
+          return;
+        }
+
+        fadeMaterial.opacity = 0;
+        const fadeStart = performance.now();
+
+        const fadeStep = (now: number) => {
+          if (loadIdRef.current !== loadId) {
+            return;
+          }
+          const progress = Math.min((now - fadeStart) / LIVE_FADE_MS, 1);
+          fadeMaterial.opacity = progress;
+
+          if (progress < 1) {
+            fadeRafRef.current = window.requestAnimationFrame(fadeStep);
+            return;
+          }
+
+          fadeMaterial.transparent = false;
+          fadeMaterial.depthWrite = true;
+          fadeMaterial.opacity = 1;
+
+          if (previousMesh) {
+            scene.remove(previousMesh);
+            disposeObject(previousMesh);
+          }
+          meshRef.current = loaded;
+        };
+
+        fadeRafRef.current = window.requestAnimationFrame(fadeStep);
+      })
+      .catch((error) => {
+        console.error("[miniature-prep] model load failed", error);
+      });
+
+    return () => {
+      window.cancelAnimationFrame(fadeRafRef.current);
     };
-  }, [fileName, url]);
+  }, [fileName, preserveView, url]);
 
   return (
     <div className="workspace-canvas">
