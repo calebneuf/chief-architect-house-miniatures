@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import trimesh
 
 from pipeline.cull_interior import cull_interior_walls
+from pipeline.cull_site import cull_below_ground, cull_exterior_clutter, detect_up_axis
 from pipeline.export import export_stl
 from pipeline.load import FileType, load_mesh
 from pipeline.repair import remove_small_components, repair_mesh
@@ -29,7 +30,13 @@ def process_mesh_bytes(data: bytes, file_type: FileType) -> ProcessResult:
 
     mesh = repair_mesh(mesh)
     mesh, faces_removed = cull_interior_walls(mesh)
-    mesh, components_removed = remove_small_components(mesh)
+    up_axis = detect_up_axis(mesh)
+    mesh, basement_removed = cull_below_ground(mesh, up_axis=up_axis)
+    faces_removed += basement_removed
+    mesh, site_removed = cull_exterior_clutter(mesh, up_axis=up_axis)
+    components_removed = site_removed
+    mesh, small_removed = remove_small_components(mesh)
+    components_removed += small_removed
 
     faces_after = len(mesh.faces)
     stl_bytes = export_stl(mesh)

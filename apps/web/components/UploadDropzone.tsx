@@ -1,13 +1,15 @@
 "use client";
 
 import { useCallback, useState } from "react";
+import { MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from "@/lib/constants";
 
 type UploadDropzoneProps = {
   disabled?: boolean;
   onFileSelected: (file: File) => void;
+  onFileRejected?: (message: string) => void;
 };
 
-export function UploadDropzone({ disabled, onFileSelected }: UploadDropzoneProps) {
+export function UploadDropzone({ disabled, onFileSelected, onFileRejected }: UploadDropzoneProps) {
   const [dragging, setDragging] = useState(false);
 
   const handleFiles = useCallback(
@@ -18,11 +20,16 @@ export function UploadDropzone({ disabled, onFileSelected }: UploadDropzoneProps
       const file = files[0];
       const lower = file.name.toLowerCase();
       if (!lower.endsWith(".stl") && !lower.endsWith(".obj")) {
+        onFileRejected?.("Upload an STL or OBJ file.");
+        return;
+      }
+      if (file.size > MAX_UPLOAD_BYTES) {
+        onFileRejected?.(`File exceeds ${MAX_UPLOAD_LABEL} limit.`);
         return;
       }
       onFileSelected(file);
     },
-    [disabled, onFileSelected],
+    [disabled, onFileRejected, onFileSelected],
   );
 
   return (
@@ -44,7 +51,7 @@ export function UploadDropzone({ disabled, onFileSelected }: UploadDropzoneProps
       }}
     >
       <p>Drop an STL or OBJ export from Chief Architect here.</p>
-      <p className="muted">Maximum file size: 50 MB</p>
+      <p className="muted">Maximum file size: {MAX_UPLOAD_LABEL}</p>
       <label>
         Choose file
         <input

@@ -56,11 +56,12 @@ Change the host port in `docker-compose.ghcr.yml` if `3000` is taken, e.g. `"308
 ## Processing pipeline
 
 1. Load STL or OBJ
-2. Optionally skip OBJ groups named like interior partitions
+2. Optionally skip OBJ groups named like interior partitions, basements, or fences
 3. Repair mesh lightly (merge vertices, remove degenerate faces)
 4. Cull faces not visible from outside the building envelope
-5. Remove tiny floating components
-6. Export binary STL
+5. Remove below-grade shells and detached exterior site objects
+6. Remove tiny floating components
+7. Export binary STL
 
 ## Chief Architect export tips
 

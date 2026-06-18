@@ -6,6 +6,7 @@ import numpy as np
 import trimesh
 
 from pipeline.cull_interior import cull_interior_walls
+from pipeline.cull_site import cull_below_ground, cull_exterior_clutter
 from pipeline.export import export_stl
 from pipeline.load import load_mesh
 from pipeline.process import process_mesh_bytes
@@ -30,6 +31,22 @@ def l_shaped_shell_with_partition() -> trimesh.Trimesh:
     partition = trimesh.creation.box(extents=(0.2, 5, 4))
     partition.apply_translation((-3, 0, 0.5))
     return trimesh.util.concatenate([shell, partition])
+
+
+def house_with_basement() -> trimesh.Trimesh:
+    above = trimesh.creation.box(extents=(10, 10, 5))
+    above.apply_translation((0, 0, 2.5))
+    basement = trimesh.creation.box(extents=(10, 10, 4))
+    basement.apply_translation((0, 0, -2))
+    return trimesh.util.concatenate([above, basement])
+
+
+def house_with_fence() -> trimesh.Trimesh:
+    house = trimesh.creation.box(extents=(10, 10, 5))
+    house.apply_translation((0, 0, 2.5))
+    fence = trimesh.creation.box(extents=(0.1, 20, 2))
+    fence.apply_translation((0, 12, 1))
+    return trimesh.util.concatenate([house, fence])
 
 
 def export_mesh(mesh: trimesh.Trimesh) -> bytes:
@@ -87,3 +104,32 @@ def test_l_shaped_shell_culls_interior_partition():
     culled, removed = cull_interior_walls(mesh, ray_count=1000)
     assert removed > 0
     assert len(culled.faces) > 0
+
+
+def test_cull_below_ground_removes_basement():
+    mesh = repair_mesh(house_with_basement())
+    faces_before = len(mesh.faces)
+
+    culled, removed = cull_below_ground(mesh)
+    faces_after = len(culled.faces)
+
+    assert removed > 0
+    assert faces_after < faces_before
+    assert culled.bounds[0][2] >= -0.5
+
+
+def test_cull_exterior_clutter_removes_fence():
+    mesh = repair_mesh(house_with_fence())
+    components_before = len(mesh.split(only_watertight=False))
+
+    culled, removed = cull_exterior_clutter(mesh)
+
+    assert removed > 0
+    assert len(culled.split(only_watertight=False)) < components_before
+
+
+def test_process_removes_basement_and_fence():
+    mesh = trimesh.util.concatenate([house_with_basement(), house_with_fence()])
+
+    result = process_mesh_bytes(export_mesh(mesh), "stl")
+    assert result.faces_after < result.faces_before

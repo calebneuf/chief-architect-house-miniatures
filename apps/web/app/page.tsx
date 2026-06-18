@@ -84,15 +84,22 @@ export default function HomePage() {
       <section className="hero">
         <h1>House Miniature Prep</h1>
         <p>
-          Upload a Chief Architect STL or OBJ export and remove interior partition walls
-          to prepare a cleaner exterior miniature for 3D printing.
+          Upload a Chief Architect STL or OBJ export and prepare an above-ground exterior
+          miniature by removing interior walls, basements, and site clutter.
         </p>
       </section>
 
       <div className="layout">
         <section className="panel">
           <h2>Upload and process</h2>
-          <UploadDropzone disabled={busy} onFileSelected={handleFileSelected} />
+          <UploadDropzone
+            disabled={busy}
+            onFileSelected={handleFileSelected}
+            onFileRejected={(message) => {
+              setError(message);
+              setStage("error");
+            }}
+          />
           <p className={`status ${stage === "error" ? "error" : ""}`}>
             {error ?? stageLabel(stage)}
           </p>

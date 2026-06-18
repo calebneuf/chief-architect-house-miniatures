@@ -19,7 +19,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+MAX_UPLOAD_BYTES = 150 * 1024 * 1024
+MAX_UPLOAD_LABEL = "150 MB"
 
 
 class ProcessResponse(BaseModel):
@@ -50,7 +51,7 @@ async def process(file: UploadFile = File(...)) -> ProcessResponse:
     if not data:
         raise HTTPException(status_code=400, detail="Uploaded file is empty.")
     if len(data) > MAX_UPLOAD_BYTES:
-        raise HTTPException(status_code=413, detail="File exceeds 50 MB limit.")
+        raise HTTPException(status_code=413, detail=f"File exceeds {MAX_UPLOAD_LABEL} limit.")
 
     try:
         result = process_mesh_bytes(data, file_type)

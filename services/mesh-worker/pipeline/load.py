@@ -16,6 +16,26 @@ INTERIOR_NAME_HINTS = (
     "room divider",
 )
 
+EXCLUDED_NAME_HINTS = (
+    "basement",
+    "crawl",
+    "crawlspace",
+    "fence",
+    "fencing",
+    "gate",
+    "landscape",
+    "landscaping",
+    "shrub",
+    "tree",
+    "terrain",
+    "driveway",
+    "sidewalk",
+    "yard",
+    "site",
+    "picket",
+    "post",
+)
+
 
 def detect_file_type(filename: str) -> FileType:
     lower = filename.lower()
@@ -33,11 +53,11 @@ def load_mesh(data: bytes | str, file_type: FileType) -> trimesh.Trimesh:
     if file_type == "obj":
         grouped = _load_obj_groups(data)
         if grouped:
-            exterior_meshes = [
-                mesh for name, mesh in grouped if not _is_interior_name(name)
+            kept_meshes = [
+                mesh for name, mesh in grouped if not _should_exclude_name(name)
             ]
-            if exterior_meshes and len(exterior_meshes) < len(grouped):
-                return trimesh.util.concatenate(exterior_meshes)
+            if kept_meshes and len(kept_meshes) < len(grouped):
+                return trimesh.util.concatenate(kept_meshes)
 
     loaded = trimesh.load(
         io.BytesIO(data),
@@ -102,11 +122,11 @@ def _coerce_to_trimesh(loaded: trimesh.Trimesh | trimesh.Scene) -> trimesh.Trime
     if isinstance(loaded, trimesh.Scene):
         named_meshes = _scene_named_meshes(loaded)
         if named_meshes:
-            exterior_meshes = [
-                mesh for name, mesh in named_meshes if not _is_interior_name(name)
+            kept_meshes = [
+                mesh for name, mesh in named_meshes if not _should_exclude_name(name)
             ]
-            if exterior_meshes:
-                return trimesh.util.concatenate(exterior_meshes)
+            if kept_meshes:
+                return trimesh.util.concatenate(kept_meshes)
 
         meshes = [g for g in loaded.geometry.values() if isinstance(g, trimesh.Trimesh)]
         if not meshes:
@@ -132,6 +152,11 @@ def _scene_named_meshes(scene: trimesh.Scene) -> list[tuple[str, trimesh.Trimesh
         else:
             named.append((geometry_name, mesh))
     return named
+
+
+def _should_exclude_name(name: str) -> bool:
+    lower = name.lower()
+    return any(hint in lower for hint in (*INTERIOR_NAME_HINTS, *EXCLUDED_NAME_HINTS))
 
 
 def _is_interior_name(name: str) -> bool:
