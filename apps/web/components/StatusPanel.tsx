@@ -1,17 +1,28 @@
 "use client";
 
 import type { AppError, ProcessingStage } from "@/lib/types";
-import { PROCESS_STEPS, stageLabel, stepState } from "@/lib/process";
+import { stageLabel, stepState, visibleProcessSteps } from "@/lib/process";
 
 type StatusPanelProps = {
   stage: ProcessingStage;
   error: AppError | null;
   fileName: string | null;
   failedStage?: ProcessingStage | null;
+  manualCleanup?: boolean;
 };
 
-export function StatusPanel({ stage, error, fileName, failedStage }: StatusPanelProps) {
-  const showSteps = stage !== "idle" || Boolean(fileName);
+export function StatusPanel({
+  stage,
+  error,
+  fileName,
+  failedStage,
+  manualCleanup = false,
+}: StatusPanelProps) {
+  const showSteps =
+    stage !== "idle" && stage !== "analyzing" && stage !== "cleanup"
+      ? true
+      : Boolean(fileName && stage === "cleanup");
+  const steps = visibleProcessSteps(manualCleanup);
 
   return (
     <section className="sidebar-section">
@@ -29,7 +40,7 @@ export function StatusPanel({ stage, error, fileName, failedStage }: StatusPanel
 
       {showSteps ? (
         <ol className="step-list">
-          {PROCESS_STEPS.map((step) => {
+          {steps.map((step) => {
             const state =
               stage === "error"
                 ? stepState(step.id, stage, failedStage)

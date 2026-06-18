@@ -1,6 +1,14 @@
 "use client";
 
-import type { AppError, ProcessStats, ProcessingStage, ViewMode, WorkerHealth } from "@/lib/types";
+import { ComponentCleanupPanel } from "@/components/ComponentCleanupPanel";
+import type {
+  AppError,
+  MeshComponent,
+  ProcessStats,
+  ProcessingStage,
+  ViewMode,
+  WorkerHealth,
+} from "@/lib/types";
 import { MAX_UPLOAD_LABEL } from "@/lib/constants";
 import { HelpSidebar } from "@/components/HelpSidebar";
 import { StatsPanel } from "@/components/StatsPanel";
@@ -19,8 +27,15 @@ type AppSidebarProps = {
   viewMode: ViewMode;
   hasProcessed: boolean;
   hasLive: boolean;
+  hasCompare: boolean;
   downloadUrl: string | null;
   downloadName: string;
+  components: MeshComponent[];
+  excludedIds: number[];
+  cleanupReady: boolean;
+  manualCleanupUsed: boolean;
+  onExcludedChange: (ids: number[]) => void;
+  onProcess: () => void;
   onFileSelected: (file: File) => void;
   onFileRejected: (message: string) => void;
   onViewModeChange: (mode: ViewMode) => void;
@@ -38,12 +53,21 @@ export function AppSidebar({
   viewMode,
   hasProcessed,
   hasLive,
+  hasCompare,
   downloadUrl,
   downloadName,
+  components,
+  excludedIds,
+  cleanupReady,
+  manualCleanupUsed,
+  onExcludedChange,
+  onProcess,
   onFileSelected,
   onFileRejected,
   onViewModeChange,
 }: AppSidebarProps) {
+  const canProcess = cleanupReady && stage === "cleanup" && !busy;
+
   return (
     <aside className="sidebar">
       <div className="sidebar-header">
@@ -79,20 +103,56 @@ export function AppSidebar({
         <p className="muted tiny">Max size: {MAX_UPLOAD_LABEL}</p>
       </section>
 
-      <StatusPanel stage={stage} error={error} fileName={fileName} failedStage={failedStage} />
+      {cleanupReady && components.length > 0 ? (
+        <ComponentCleanupPanel
+          components={components}
+          excludedIds={excludedIds}
+          disabled={busy}
+          onExcludedChange={onExcludedChange}
+        />
+      ) : null}
+
+      {cleanupReady ? (
+        <section className="sidebar-section">
+          <button
+            className="primary block"
+            type="button"
+            disabled={!canProcess}
+            onClick={onProcess}
+          >
+            {busy ? "Processing…" : "Process model"}
+          </button>
+        </section>
+      ) : null}
+
+      <StatusPanel
+        stage={stage}
+        error={error}
+        fileName={fileName}
+        failedStage={failedStage}
+        manualCleanup={manualCleanupUsed}
+      />
 
       <StatsPanel stats={stats} compact />
 
       {fileName ? (
         <section className="sidebar-section">
           <h2>Preview</h2>
-          <div className="segmented">
+          <div className="segmented segmented-4">
             <button
               type="button"
               className={viewMode === "original" ? "active" : ""}
               onClick={() => onViewModeChange("original")}
             >
               Original
+            </button>
+            <button
+              type="button"
+              className={viewMode === "compare" ? "active" : ""}
+              onClick={() => onViewModeChange("compare")}
+              disabled={!hasCompare}
+            >
+              Compare
             </button>
             <button
               type="button"

@@ -1,3 +1,11 @@
+export type MeshComponent = {
+  id: number;
+  faces: number;
+  bounds: number[][];
+  extents: number[];
+  footprint: number;
+};
+
 export type ProcessStats = {
   facesBefore: number;
   facesAfter: number;
@@ -14,6 +22,8 @@ export type ProcessResponse = ProcessStats & {
 
 export type ProcessingStage =
   | "idle"
+  | "analyzing"
+  | "cleanup"
   | "uploading"
   | "loading"
   | "repairing"
@@ -37,7 +47,7 @@ export type JobPollResponse = {
   result: ProcessResponse | null;
 };
 
-export type ViewMode = "original" | "processed" | "live";
+export type ViewMode = "original" | "processed" | "live" | "compare";
 
 export type WorkerHealth = "checking" | "online" | "offline";
 

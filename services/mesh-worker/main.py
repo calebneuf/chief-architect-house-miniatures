@@ -5,10 +5,11 @@ import base64
 import logging
 import threading
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from pipeline.components import analyze_mesh_bytes, parse_exclude_components
 from pipeline.jobs import job_store
 from pipeline.load import detect_file_type
 from pipeline.log import setup_logging
@@ -57,7 +58,13 @@ class JobStatusResponse(BaseModel):
     error: str | None = None
 
 
-def _run_job(job_id: str, data: bytes, file_type: str) -> None:
+def _run_job(
+    job_id: str,
+    data: bytes,
+    file_type: str,
+    exclude_components: list[int],
+    manual_cleanup: bool,
+) -> None:
     job_store.update(job_id, status="running", stage="loading", progress=0.05)
 
     def on_stage(stage: str, progress: float, mesh) -> None:
@@ -72,7 +79,13 @@ def _run_job(job_id: str, data: bytes, file_type: str) -> None:
     try:
         from pipeline.process import process_mesh_bytes
 
-        result = process_mesh_bytes(data, file_type, on_stage=on_stage)
+        result = process_mesh_bytes(
+            data,
+            file_type,
+            on_stage=on_stage,
+            exclude_components=exclude_components,
+            manual_cleanup=manual_cleanup,
+        )
         payload = ProcessResponse(
             stl_base64=base64.b64encode(result.stl_bytes).decode("ascii"),
             faces_before=result.faces_before,
@@ -101,8 +114,8 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.post("/jobs", response_model=JobCreateResponse)
-async def create_job(file: UploadFile = File(...)) -> JobCreateResponse:
+@app.post("/analyze")
+async def analyze(file: UploadFile = File(...)) -> dict[str, object]:
     if not file.filename:
         raise HTTPException(status_code=400, detail="Filename is required.")
 
@@ -117,10 +130,40 @@ async def create_job(file: UploadFile = File(...)) -> JobCreateResponse:
     if len(data) > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail=f"File exceeds {MAX_UPLOAD_LABEL} limit.")
 
+    try:
+        components = await asyncio.to_thread(analyze_mesh_bytes, data, file_type)
+    except Exception as exc:
+        logger.exception("Analyze failed for %s", file.filename)
+        raise HTTPException(status_code=500, detail=f"Analyze failed: {exc}") from exc
+
+    return {"components": components}
+
+
+@app.post("/jobs", response_model=JobCreateResponse)
+async def create_job(
+    file: UploadFile = File(...),
+    exclude_components: str = Form("[]"),
+    manual_cleanup: bool = Form(False),
+) -> JobCreateResponse:
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Filename is required.")
+
+    try:
+        file_type = detect_file_type(file.filename)
+        excluded = parse_exclude_components(exclude_components)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail=f"File exceeds {MAX_UPLOAD_LABEL} limit.")
+
     job = job_store.create()
     thread = threading.Thread(
         target=_run_job,
-        args=(job.id, data, file_type),
+        args=(job.id, data, file_type, excluded, manual_cleanup),
         daemon=True,
     )
     thread.start()

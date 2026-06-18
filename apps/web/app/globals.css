@@ -295,6 +295,94 @@ button.primary:disabled {
   font-weight: 600;
 }
 
+.segmented-4 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.segmented button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.text-button {
+  border: 0;
+  background: none;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 0.82rem;
+  padding: 0;
+}
+
+.text-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.cleanup-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.35rem;
+}
+
+.cleanup-header h2 {
+  margin: 0;
+}
+
+.component-list {
+  list-style: none;
+  margin: 0.65rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.45rem;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.component-row label {
+  display: flex;
+  gap: 0.55rem;
+  align-items: flex-start;
+  cursor: pointer;
+  font-size: 0.86rem;
+}
+
+.component-row input {
+  margin-top: 0.2rem;
+}
+
+.component-label {
+  display: grid;
+  gap: 0.1rem;
+}
+
+.workspace-badge-right {
+  left: auto;
+  right: 1rem;
+}
+
+.compare-controls {
+  position: absolute;
+  left: 50%;
+  bottom: 1.25rem;
+  transform: translateX(-50%);
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.55rem 0.85rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid var(--border);
+  backdrop-filter: blur(6px);
+  min-width: min(420px, calc(100% - 2rem));
+}
+
+.compare-controls input[type="range"] {
+  flex: 1;
+}
+
 .help-list {
   margin: 0;
   padding-left: 1.1rem;

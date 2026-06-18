@@ -2,6 +2,7 @@ import type {
   ApiErrorPayload,
   AppError,
   JobPollResponse,
+  MeshComponent,
   ProcessResponse,
   ProcessingStage,
 } from "@/lib/types";
@@ -17,8 +18,17 @@ export const PROCESS_STEPS: { id: ProcessingStage; label: string }[] = [
   { id: "complete", label: "Finish export" },
 ];
 
+export function visibleProcessSteps(manualCleanup: boolean) {
+  if (!manualCleanup) {
+    return PROCESS_STEPS;
+  }
+  return PROCESS_STEPS.filter((step) => step.id !== "removing_site");
+}
+
 const STAGE_LABELS: Record<ProcessingStage, string> = {
   idle: "Upload a Chief Architect STL or OBJ to begin.",
+  analyzing: "Analyzing disconnected parts…",
+  cleanup: "Select parts to remove, then click Process model.",
   uploading: "Sending your model to the server…",
   loading: "Loading geometry…",
   repairing: "Repairing mesh…",
@@ -132,7 +142,47 @@ function sleep(ms: number): Promise<void> {
 export type ProcessModelOptions = {
   onStage?: (stage: ProcessingStage, progress: number) => void;
   onPreview?: (stlBase64: string) => void;
+  excludeComponents?: number[];
+  manualCleanup?: boolean;
 };
+
+export async function analyzeModel(file: File): Promise<MeshComponent[]> {
+  debugLog("analyzeModel:start", { name: file.name, bytes: file.size });
+  const formData = new FormData();
+  formData.append("file", file);
+
+  let response: Response;
+  try {
+    response = await fetch("/api/analyze", {
+      method: "POST",
+      body: formData,
+    });
+  } catch (cause) {
+    throw new ProcessRequestError({
+      title: "Could not reach the web API",
+      message: "The browser failed to contact /api/analyze.",
+      details: cause instanceof Error ? cause.message : undefined,
+      suggestions: ["Refresh the page and try again."],
+    });
+  }
+
+  let payload: ApiErrorPayload & { components?: MeshComponent[] };
+  try {
+    payload = await response.json();
+  } catch {
+    throw new ProcessRequestError({
+      title: "Unexpected server response",
+      message: "The server returned a non-JSON response when analyzing the model.",
+      statusCode: response.status,
+    });
+  }
+
+  if (!response.ok) {
+    throw new ProcessRequestError(toAppError(payload, response.status));
+  }
+
+  return payload.components ?? [];
+}
 
 export async function processModel(
   file: File,
@@ -141,6 +191,11 @@ export async function processModel(
   debugLog("processModel:start", { name: file.name, bytes: file.size });
   const formData = new FormData();
   formData.append("file", file);
+  formData.append(
+    "exclude_components",
+    JSON.stringify(options.excludeComponents ?? []),
+  );
+  formData.append("manual_cleanup", options.manualCleanup ? "true" : "false");
 
   let createResponse: Response;
   try {
@@ -251,6 +306,15 @@ export async function checkWorkerHealth(): Promise<{ online: boolean; detail: st
   }
 }
 
+export function base64ToArrayBuffer(base64: string): ArrayBuffer {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes.buffer;
+}
+
 export function base64ToBlobUrl(base64: string, mimeType: string): string {
   const binary = atob(base64);
   const bytes = new Uint8Array(binary.length);
@@ -278,6 +342,9 @@ export function stepState(
     "done",
   ];
 
+  const normalizedStage =
+    currentStage === "analyzing" || currentStage === "cleanup" ? "idle" : currentStage;
+
   if (currentStage === "error" && failedStage) {
     const failedIndex = order.indexOf(failedStage);
     const stepIndex = order.indexOf(stepId);
@@ -290,16 +357,16 @@ export function stepState(
     return "pending";
   }
 
-  if (currentStage === "idle") {
+  if (currentStage === "idle" || currentStage === "analyzing" || currentStage === "cleanup") {
     return "pending";
   }
 
   const stepIndex = order.indexOf(stepId);
-  const currentIndex = order.indexOf(currentStage);
+  const currentIndex = order.indexOf(normalizedStage);
   if (currentIndex === -1) {
     return "pending";
   }
-  if (stepIndex < currentIndex || currentStage === "done") {
+  if (stepIndex < currentIndex || normalizedStage === "done") {
     return "complete";
   }
   if (stepIndex === currentIndex) {

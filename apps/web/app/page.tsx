@@ -4,37 +4,49 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { AppSidebar } from "@/components/AppSidebar";
 import { WorkspaceCanvas } from "@/components/WorkspaceCanvas";
 import {
+  analyzeModel,
+  base64ToArrayBuffer,
   base64ToBlobUrl,
   checkWorkerHealth,
   processModel,
   ProcessRequestError,
 } from "@/lib/process";
-import type { AppError, ProcessStats, ProcessingStage, ViewMode, WorkerHealth } from "@/lib/types";
+import type {
+  AppError,
+  MeshComponent,
+  ProcessStats,
+  ProcessingStage,
+  ViewMode,
+  WorkerHealth,
+} from "@/lib/types";
 
 export default function HomePage() {
   const [stage, setStage] = useState<ProcessingStage>("idle");
   const [failedStage, setFailedStage] = useState<ProcessingStage | null>(null);
   const [error, setError] = useState<AppError | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
-  const [originalUrl, setOriginalUrl] = useState<string | null>(null);
-  const [processedUrl, setProcessedUrl] = useState<string | null>(null);
-  const [liveUrl, setLiveUrl] = useState<string | null>(null);
-  const [stats, setStats] = useState<ProcessStats | null>(null);
+  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+  const [originalBuffer, setOriginalBuffer] = useState<ArrayBuffer | null>(null);
+  const [processedBuffer, setProcessedBuffer] = useState<ArrayBuffer | null>(null);
+  const [liveBuffer, setLiveBuffer] = useState<ArrayBuffer | null>(null);
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
+  const [stats, setStats] = useState<ProcessStats | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("original");
+  const [compareSplit, setCompareSplit] = useState(0.5);
   const [workerHealth, setWorkerHealth] = useState<WorkerHealth>("checking");
   const [workerDetail, setWorkerDetail] = useState("Checking connection…");
-  const liveUrlRef = useRef<string | null>(null);
+  const [components, setComponents] = useState<MeshComponent[]>([]);
+  const [excludedIds, setExcludedIds] = useState<number[]>([]);
+  const [cleanupReady, setCleanupReady] = useState(false);
+  const [manualCleanupUsed, setManualCleanupUsed] = useState(false);
   const [preserveLiveView, setPreserveLiveView] = useState(false);
+  const downloadUrlRef = useRef<string | null>(null);
 
   useEffect(() => {
     return () => {
-      if (originalUrl) URL.revokeObjectURL(originalUrl);
-      if (processedUrl) URL.revokeObjectURL(processedUrl);
-      if (downloadUrl) URL.revokeObjectURL(downloadUrl);
-      if (liveUrlRef.current) URL.revokeObjectURL(liveUrlRef.current);
+      if (downloadUrlRef.current) URL.revokeObjectURL(downloadUrlRef.current);
     };
-  }, [downloadUrl, originalUrl, processedUrl]);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -57,7 +69,11 @@ export default function HomePage() {
     };
   }, []);
 
-  const busy = stage !== "idle" && stage !== "done" && stage !== "error";
+  const busy =
+    stage !== "idle" &&
+    stage !== "cleanup" &&
+    stage !== "done" &&
+    stage !== "error";
 
   const setFailure = (nextError: AppError, atStage: ProcessingStage) => {
     console.error("[miniature-prep] failed at", atStage, nextError);
@@ -67,15 +83,9 @@ export default function HomePage() {
   };
 
   const updateLivePreview = (stlBase64: string) => {
-    const isFollowUpPreview = Boolean(liveUrlRef.current);
-    const nextLiveUrl = base64ToBlobUrl(stlBase64, "model/stl");
-    if (liveUrlRef.current) {
-      URL.revokeObjectURL(liveUrlRef.current);
-    }
-    liveUrlRef.current = nextLiveUrl;
+    const isFollowUpPreview = Boolean(liveBuffer);
     setPreserveLiveView(isFollowUpPreview);
-    setLiveUrl(nextLiveUrl);
-    setViewMode("live");
+    setLiveBuffer(base64ToArrayBuffer(stlBase64));
   };
 
   const handleFileSelected = async (file: File) => {
@@ -83,21 +93,78 @@ export default function HomePage() {
     setFailedStage(null);
     setStats(null);
     setFileName(file.name);
+    setUploadedFile(file);
     setViewMode("original");
     setPreserveLiveView(false);
+    setCleanupReady(false);
+    setManualCleanupUsed(false);
+    setExcludedIds([]);
+    setComponents([]);
+    setProcessedBuffer(null);
+    setLiveBuffer(null);
+    setCompareSplit(0.5);
 
-    if (originalUrl) URL.revokeObjectURL(originalUrl);
-    if (processedUrl) URL.revokeObjectURL(processedUrl);
-    if (downloadUrl) URL.revokeObjectURL(downloadUrl);
-    if (liveUrlRef.current) {
-      URL.revokeObjectURL(liveUrlRef.current);
-      liveUrlRef.current = null;
+    if (downloadUrlRef.current) {
+      URL.revokeObjectURL(downloadUrlRef.current);
+      downloadUrlRef.current = null;
+    }
+    setDownloadUrl(null);
+
+    let buffer: ArrayBuffer;
+    try {
+      buffer = await file.arrayBuffer();
+    } catch (readError) {
+      setFailure(
+        {
+          title: "Could not read file",
+          message: readError instanceof Error ? readError.message : "Failed to read the upload.",
+        },
+        "uploading",
+      );
+      return;
     }
 
-    const nextOriginalUrl = URL.createObjectURL(file);
-    setOriginalUrl(nextOriginalUrl);
-    setProcessedUrl(null);
-    setLiveUrl(null);
+    setOriginalBuffer(buffer);
+
+    try {
+      setStage("analyzing");
+      const analyzed = await analyzeModel(file);
+      setComponents(analyzed);
+      setStage("cleanup");
+      setCleanupReady(true);
+    } catch (analyzeError) {
+      if (analyzeError instanceof ProcessRequestError) {
+        setFailure(analyzeError.appError, "analyzing");
+        return;
+      }
+      setFailure(
+        {
+          title: "Analysis failed",
+          message:
+            analyzeError instanceof Error ? analyzeError.message : "An unexpected error occurred.",
+        },
+        "analyzing",
+      );
+    }
+  };
+
+  const handleProcess = async () => {
+    if (!uploadedFile) {
+      return;
+    }
+
+    setError(null);
+    setFailedStage(null);
+    setStats(null);
+    setManualCleanupUsed(true);
+    setLiveBuffer(null);
+    setProcessedBuffer(null);
+    setPreserveLiveView(false);
+
+    if (downloadUrlRef.current) {
+      URL.revokeObjectURL(downloadUrlRef.current);
+      downloadUrlRef.current = null;
+    }
     setDownloadUrl(null);
 
     let currentStage: ProcessingStage = "uploading";
@@ -106,7 +173,9 @@ export default function HomePage() {
       currentStage = "uploading";
       setStage("uploading");
 
-      const result = await processModel(file, {
+      const result = await processModel(uploadedFile, {
+        excludeComponents: excludedIds,
+        manualCleanup: true,
         onStage: (nextStage, progress) => {
           currentStage = nextStage;
           setStage(nextStage);
@@ -120,11 +189,12 @@ export default function HomePage() {
 
       currentStage = "complete";
       setStage("complete");
-      const processedObjectUrl = base64ToBlobUrl(result.stlBase64, "model/stl");
+      const processed = base64ToArrayBuffer(result.stlBase64);
+      setProcessedBuffer(processed);
       const downloadableUrl = base64ToBlobUrl(result.stlBase64, "model/stl");
-      setProcessedUrl(processedObjectUrl);
+      downloadUrlRef.current = downloadableUrl;
       setDownloadUrl(downloadableUrl);
-      setViewMode("processed");
+      setViewMode("compare");
       setStats({
         facesBefore: result.facesBefore,
         facesAfter: result.facesAfter,
@@ -159,21 +229,57 @@ export default function HomePage() {
     return `${base}-miniature.stl`;
   }, [fileName]);
 
-  const activeUrl =
-    viewMode === "processed"
-      ? processedUrl
-      : viewMode === "live"
-        ? liveUrl ?? processedUrl
-        : originalUrl;
+  const compareSource = useMemo(() => {
+    if (viewMode === "compare") {
+      if (processedBuffer) {
+        return { arrayBuffer: processedBuffer, fileName: "processed.stl" };
+      }
+      if (liveBuffer) {
+        return { arrayBuffer: liveBuffer, fileName: "preview.stl" };
+      }
+    }
+    if (viewMode === "processed" && processedBuffer) {
+      return { arrayBuffer: processedBuffer, fileName: "processed.stl" };
+    }
+    if (viewMode === "live" && liveBuffer) {
+      return { arrayBuffer: liveBuffer, fileName: "preview.stl" };
+    }
+    return null;
+  }, [liveBuffer, processedBuffer, viewMode]);
+
+  const primarySource = useMemo(() => {
+    if (!originalBuffer && !fileName) {
+      return null;
+    }
+    return {
+      arrayBuffer: originalBuffer,
+      fileName: fileName ?? "model.stl",
+    };
+  }, [fileName, originalBuffer]);
+
+  const secondarySource = viewMode === "compare" ? compareSource : null;
+
+  const singleSource =
+    viewMode === "original" || viewMode === "compare"
+      ? primarySource
+      : compareSource ?? primarySource;
 
   const activeLabel =
-    viewMode === "processed"
-      ? "Processed miniature"
-      : viewMode === "live"
-        ? "Live preview"
-        : fileName
-          ? "Original upload"
-          : undefined;
+    viewMode === "compare"
+      ? "Original"
+      : viewMode === "processed"
+        ? "Processed miniature"
+        : viewMode === "live"
+          ? "Live preview"
+          : fileName
+            ? "Original upload"
+            : undefined;
+
+  const secondaryLabel = viewMode === "compare"
+    ? processedBuffer
+      ? "Processed"
+      : "Live preview"
+    : undefined;
 
   return (
     <div className="app-shell">
@@ -187,10 +293,17 @@ export default function HomePage() {
         workerHealth={workerHealth}
         workerDetail={workerDetail}
         viewMode={viewMode}
-        hasProcessed={Boolean(processedUrl)}
-        hasLive={Boolean(liveUrl)}
+        hasProcessed={Boolean(processedBuffer)}
+        hasLive={Boolean(liveBuffer)}
+        hasCompare={Boolean(originalBuffer && (processedBuffer || liveBuffer))}
         downloadUrl={downloadUrl}
         downloadName={downloadName}
+        components={components}
+        excludedIds={excludedIds}
+        cleanupReady={cleanupReady}
+        manualCleanupUsed={manualCleanupUsed}
+        onExcludedChange={setExcludedIds}
+        onProcess={handleProcess}
         onFileSelected={handleFileSelected}
         onFileRejected={(message) => {
           setFailure(
@@ -204,16 +317,13 @@ export default function HomePage() {
         onViewModeChange={setViewMode}
       />
       <WorkspaceCanvas
-        url={activeUrl}
-        fileName={
-          viewMode === "processed"
-            ? "processed.stl"
-            : viewMode === "live"
-              ? "preview.stl"
-              : fileName ?? undefined
-        }
+        source={viewMode === "compare" ? primarySource : singleSource}
         label={activeLabel}
         preserveView={viewMode === "live" && preserveLiveView}
+        compare={secondarySource}
+        compareLabel={secondaryLabel}
+        compareSplit={compareSplit}
+        onCompareSplitChange={setCompareSplit}
       />
     </div>
   );

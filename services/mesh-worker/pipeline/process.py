@@ -7,6 +7,7 @@ from typing import Callable
 import trimesh
 
 from pipeline.cull_site import cull_exterior_clutter, detect_up_axis
+from pipeline.components import remove_components
 from pipeline.export import export_stl
 from pipeline.floor_detect import (
     detect_ceiling_level,
@@ -40,6 +41,8 @@ def process_mesh_bytes(
     data: bytes,
     file_type: FileType,
     on_stage: StageCallback | None = None,
+    exclude_components: list[int] | None = None,
+    manual_cleanup: bool = False,
 ) -> ProcessResult:
     started = time.perf_counter()
 
@@ -75,11 +78,18 @@ def process_mesh_bytes(
 
     report("repairing", 0.18, mesh)
 
-    with log_step(logger, "cull exterior clutter"):
-        mesh, site_removed = cull_exterior_clutter(mesh, up_axis=up_axis)
-        logger.info("Exterior clutter removed %d detached components", site_removed)
+    if exclude_components:
+        mesh, manual_removed = remove_components(mesh, exclude_components)
+        logger.info("Manual cleanup removed %d faces before pipeline", manual_removed)
 
-    report("removing_site", 0.28, mesh)
+    if not manual_cleanup:
+        with log_step(logger, "cull exterior clutter"):
+            mesh, site_removed = cull_exterior_clutter(mesh, up_axis=up_axis)
+            logger.info("Exterior clutter removed %d detached components", site_removed)
+        report("removing_site", 0.28, mesh)
+    else:
+        site_removed = 0
+        report("removing_site", 0.28, mesh)
 
     ground_z = detect_ground_floor_level(mesh, up_axis=up_axis)
     ceiling_z = detect_ceiling_level(mesh, ground_z, up_axis=up_axis)

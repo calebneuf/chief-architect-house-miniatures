@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 const MESH_WORKER_URL =
   process.env.MESH_WORKER_URL ?? "http://localhost:8000";
 
-export const maxDuration = 1200;
+export const maxDuration = 600;
 
 export async function POST(request: NextRequest) {
   const formData = await request.formData();
@@ -16,18 +16,8 @@ export async function POST(request: NextRequest) {
   const workerFormData = new FormData();
   workerFormData.append("file", file, file.name);
 
-  const excludeComponents = formData.get("exclude_components");
-  const manualCleanup = formData.get("manual_cleanup");
-  if (typeof excludeComponents === "string") {
-    workerFormData.append("exclude_components", excludeComponents);
-  }
-  workerFormData.append(
-    "manual_cleanup",
-    manualCleanup === "true" ? "true" : "false",
-  );
-
   try {
-    const response = await fetch(`${MESH_WORKER_URL}/jobs`, {
+    const response = await fetch(`${MESH_WORKER_URL}/analyze`, {
       method: "POST",
       body: workerFormData,
     });
@@ -35,7 +25,7 @@ export async function POST(request: NextRequest) {
     if (!response.ok) {
       return NextResponse.json(payload, { status: response.status });
     }
-    return NextResponse.json({ jobId: payload.job_id });
+    return NextResponse.json({ components: payload.components ?? [] });
   } catch (cause) {
     const details = cause instanceof Error ? cause.message : "Connection failed";
     return NextResponse.json(
