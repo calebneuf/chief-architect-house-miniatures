@@ -8,10 +8,10 @@ import trimesh
 
 from pipeline.cull_site import cull_below_ground, cull_exterior_clutter, detect_up_axis
 from pipeline.export import export_stl
-from pipeline.exterior_shell import extract_exterior_shell
 from pipeline.load import FileType, load_mesh
 from pipeline.log import get_logger, log_step
-from pipeline.repair import remove_small_components, repair_mesh
+from pipeline.prune_interior import prune_interior_partitions
+from pipeline.repair import repair_mesh
 from pipeline.solidify import solidify_mesh
 
 logger = get_logger(__name__)
@@ -62,29 +62,25 @@ def process_mesh_bytes(data: bytes, file_type: FileType) -> ProcessResult:
         mesh, basement_removed = cull_below_ground(mesh, up_axis=up_axis)
         logger.info("Below-ground cull removed %d faces", basement_removed)
 
-    with log_step(logger, "extract exterior shell"):
-        mesh, interior_removed = extract_exterior_shell(mesh)
+    with log_step(logger, "prune interior partitions"):
+        mesh, interior_removed = prune_interior_partitions(mesh)
         logger.info(
-            "Exterior shell step removed %d faces (%d remaining)",
+            "Interior partition prune removed %d faces (%d remaining)",
             interior_removed,
             len(mesh.faces),
         )
 
-    with log_step(logger, "remove small components"):
-        mesh, small_removed = remove_small_components(mesh)
-        logger.info("Removed %d small floating components", small_removed)
-
-    with log_step(logger, "fill interior cavity"):
-        faces_before_fill = len(mesh.faces)
+    with log_step(logger, "solidify for printing"):
+        faces_before_solidify = len(mesh.faces)
         mesh = solidify_mesh(mesh, reference_extents=reference_extents)
         logger.info(
-            "Cavity fill: %d shell faces -> %d solid faces",
-            faces_before_fill,
+            "Solidify: %d input faces -> %d solid faces",
+            faces_before_solidify,
             len(mesh.faces),
         )
 
     faces_removed = interior_removed + basement_removed
-    components_removed = site_removed + small_removed
+    components_removed = site_removed
 
     with log_step(logger, "export STL"):
         faces_after = len(mesh.faces)

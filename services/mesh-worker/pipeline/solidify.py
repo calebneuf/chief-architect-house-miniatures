@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 import trimesh
+from scipy import ndimage
 
 from pipeline.cull_site import detect_up_axis
 from pipeline.log import get_logger
@@ -28,10 +29,10 @@ def solidify_mesh(
     reference_extents: np.ndarray | None = None,
 ) -> trimesh.Trimesh:
     """
-    Fill the enclosed volume inside the exterior shell.
+    Merge separate architectural surfaces into one printable solid.
 
-    The exterior envelope is preserved; interior partitions are absorbed into a
-    single printable solid.
+    Voxels bridge small gaps between disconnected walls/floors/roofs, then the
+    enclosed volume is filled.
     """
     if len(mesh.faces) == 0:
         return mesh
@@ -49,17 +50,25 @@ def solidify_mesh(
         mesh.extents.max() / pitch,
     )
 
-    solid = _fill_enclosed_volume(mesh, pitch=pitch)
-    if solid is None:
-        logger.warning("Cavity fill failed; returning exterior shell without solid fill")
-        return mesh
+    dilation_schedule = (2, 3, 4)
+    solid: trimesh.Trimesh | None = None
 
-    if not _shape_preserved(reference_extents, solid.extents):
-        logger.warning(
-            "Cavity fill distorted footprint (input %s, output %s); keeping exterior shell",
-            np.round(reference_extents, 2).tolist(),
-            np.round(solid.extents, 2).tolist(),
+    for dilation in dilation_schedule:
+        candidate = _fill_enclosed_volume(mesh, pitch=pitch, dilation_iterations=dilation)
+        if candidate is None:
+            continue
+        if _shape_preserved(reference_extents, candidate.extents):
+            solid = candidate
+            logger.info("Cavity fill succeeded with dilation=%d", dilation)
+            break
+        logger.debug(
+            "Dilation %d distorted footprint (output %s)",
+            dilation,
+            np.round(candidate.extents, 2).tolist(),
         )
+
+    if solid is None:
+        logger.warning("Cavity fill failed; returning shell geometry without solid fill")
         return mesh
 
     solid.merge_vertices()
@@ -76,7 +85,11 @@ def solidify_mesh(
     return solid
 
 
-def _fill_enclosed_volume(mesh: trimesh.Trimesh, pitch: float) -> trimesh.Trimesh | None:
+def _fill_enclosed_volume(
+    mesh: trimesh.Trimesh,
+    pitch: float,
+    dilation_iterations: int,
+) -> trimesh.Trimesh | None:
     try:
         voxels = mesh.voxelized(pitch=pitch)
     except Exception as exc:
@@ -87,16 +100,22 @@ def _fill_enclosed_volume(mesh: trimesh.Trimesh, pitch: float) -> trimesh.Trimes
         logger.warning("Voxelization produced an empty grid")
         return None
 
+    matrix = voxels.matrix.copy()
+    if dilation_iterations > 0:
+        matrix = ndimage.binary_dilation(matrix, iterations=dilation_iterations)
+
+    matrix = ndimage.binary_fill_holes(matrix)
+
     logger.debug(
-        "Voxel grid shape=%s filled=%d",
+        "Voxel grid shape=%s surface=%d solid=%d dilation=%d",
         voxels.shape,
-        voxels.filled_count,
+        int(voxels.filled_count),
+        int(matrix.sum()),
+        dilation_iterations,
     )
 
     try:
-        filled = voxels.fill()
-        solid = filled.marching_cubes
-        solid.apply_transform(filled.transform)
+        solid = matrix_to_mesh(matrix, transform=voxels.transform)
     except Exception as exc:
         logger.warning("Marching cubes failed: %s", exc)
         return None
@@ -107,17 +126,22 @@ def _fill_enclosed_volume(mesh: trimesh.Trimesh, pitch: float) -> trimesh.Trimes
     return solid
 
 
+def matrix_to_mesh(matrix: np.ndarray, transform: np.ndarray) -> trimesh.Trimesh:
+    """Convert a filled voxel matrix to world-space mesh."""
+    from trimesh.voxel import ops
+
+    mesh = ops.matrix_to_marching_cubes(matrix=matrix)
+    mesh.apply_transform(transform)
+    return mesh
+
+
 def _shape_preserved(
     reference_extents: np.ndarray,
     output_extents: np.ndarray,
-    min_horizontal_ratio: float = 0.65,
-    max_horizontal_ratio: float = 1.12,
+    min_horizontal_ratio: float = 0.82,
+    max_horizontal_ratio: float = 1.08,
 ) -> bool:
-    """
-    Reject voxel fills that collapse or inflate the house footprint.
-
-    Compares horizontal spans only so roof height can change slightly.
-    """
+    """Reject fills that collapse or swell the house footprint."""
     up_axis = int(np.argmin(reference_extents))
     horizontal_axes = [index for index in range(3) if index != up_axis]
 

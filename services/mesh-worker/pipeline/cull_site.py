@@ -54,7 +54,7 @@ def estimate_ground_level(mesh: trimesh.Trimesh, up_axis: int) -> float:
 
 
 def cull_below_ground(mesh: trimesh.Trimesh, up_axis: int | None = None) -> tuple[trimesh.Trimesh, int]:
-    """Remove below-grade shells and geometry under the main floor level."""
+    """Remove detached below-grade shells. Never slices faces off the main building."""
     if len(mesh.faces) == 0:
         return mesh, 0
 
@@ -63,50 +63,31 @@ def cull_below_ground(mesh: trimesh.Trimesh, up_axis: int | None = None) -> tupl
     span = float(mesh.bounds[1][axis] - mesh.bounds[0][axis])
     tolerance = max(span * 0.01, 1e-6)
 
-    if len(components) > 1:
-        logger.debug("Below-ground: %d components, grade axis=%d", len(components), axis)
-        horizontal_axes = [index for index in range(3) if index != axis]
-
-        def footprint_area(component: trimesh.Trimesh) -> float:
-            extents = component.bounds[1] - component.bounds[0]
-            return float(extents[horizontal_axes[0]] * extents[horizontal_axes[1]])
-
-        main = max(components, key=footprint_area)
-        grade = float(main.bounds[0][axis])
-        logger.debug("Below-ground grade level: %.3f", grade)
-        kept: list[trimesh.Trimesh] = []
-        removed = 0
-
-        for component in components:
-            if float(component.bounds[1][axis]) <= grade + tolerance:
-                removed += len(component.faces)
-                continue
-            kept.append(component)
-
-        if not kept or removed == 0:
-            return mesh, 0
-        return trimesh.util.concatenate(kept), removed
-
-    centroids = mesh.triangles_center[:, axis]
-    h_min = float(centroids.min())
-    h_max = float(centroids.max())
-    span = h_max - h_min
-    if span <= 1e-6:
+    if len(components) <= 1:
         return mesh, 0
 
-    ground = float(np.percentile(centroids, 42))
-    below_fraction = float((centroids < ground).mean())
-    if below_fraction < 0.18:
-        return mesh, 0
+    logger.debug("Below-ground: %d components, grade axis=%d", len(components), axis)
+    horizontal_axes = [index for index in range(3) if index != axis]
 
-    keep_mask = centroids >= ground
-    if keep_mask.all():
-        return mesh, 0
+    def footprint_area(component: trimesh.Trimesh) -> float:
+        extents = component.bounds[1] - component.bounds[0]
+        return float(extents[horizontal_axes[0]] * extents[horizontal_axes[1]])
 
-    culled = mesh.copy()
-    culled.update_faces(keep_mask)
-    removed = int(len(mesh.faces) - keep_mask.sum())
-    return culled, removed
+    main = max(components, key=footprint_area)
+    grade = float(main.bounds[0][axis])
+    logger.debug("Below-ground grade level: %.3f", grade)
+    kept: list[trimesh.Trimesh] = []
+    removed = 0
+
+    for component in components:
+        if float(component.bounds[1][axis]) <= grade + tolerance:
+            removed += len(component.faces)
+            continue
+        kept.append(component)
+
+    if not kept or removed == 0:
+        return mesh, 0
+    return trimesh.util.concatenate(kept), removed
 
 
 def cull_exterior_clutter(

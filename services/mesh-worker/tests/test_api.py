@@ -27,6 +27,5 @@ def test_process_endpoint():
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["faces_removed"] > 0
-    assert payload["faces_after"] > 0
+    assert payload["faces_after"] > payload["faces_before"]
     assert payload["stl_base64"]

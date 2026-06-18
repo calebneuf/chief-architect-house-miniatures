@@ -7,8 +7,8 @@ import trimesh
 
 from pipeline.cull_site import cull_below_ground, cull_exterior_clutter
 from pipeline.export import export_stl
-from pipeline.exterior_shell import extract_exterior_shell
 from pipeline.load import load_mesh
+from pipeline.prune_interior import prune_interior_partitions
 from pipeline.process import process_mesh_bytes
 from pipeline.repair import repair_mesh
 from pipeline.solidify import solidify_mesh
@@ -50,44 +50,65 @@ def house_with_fence() -> trimesh.Trimesh:
     return trimesh.util.concatenate([house, fence])
 
 
+def ca_style_panelized_house() -> trimesh.Trimesh:
+    """Many disconnected wall panels like a Chief Architect export."""
+    parts = []
+    floor = trimesh.creation.box(extents=(40, 30, 0.5))
+    floor.apply_translation((0, 0, 0.25))
+    parts.append(floor)
+    for spec in [(-20, 0, 0.4, 30), (20, 0, 0.4, 30), (0, -15, 40, 0.4)]:
+        width, depth = spec[2], spec[3]
+        wall = trimesh.creation.box(
+            extents=(width if width > 1 else 0.4, depth if depth > 1 else 0.4, 10)
+        )
+        wall.apply_translation((spec[0], spec[1], 5.5))
+        parts.append(wall)
+    for index in range(8):
+        panel = trimesh.creation.box(extents=(4, 0.2, 3))
+        panel.apply_translation((-16 + index * 4.5, -15, 6))
+        parts.append(panel)
+    partition = trimesh.creation.box(extents=(0.2, 20, 8))
+    partition.apply_translation((0, 0, 5))
+    parts.append(partition)
+    return trimesh.util.concatenate(parts)
+
+
 def export_mesh(mesh: trimesh.Trimesh) -> bytes:
     return export_stl(mesh)
 
 
-def test_extract_shell_removes_interior_partition():
+def test_prune_removes_only_interior_partition():
     mesh = repair_mesh(box_with_interior_wall())
     faces_before = len(mesh.faces)
 
-    shell, removed = extract_exterior_shell(mesh, ray_count=800)
-    faces_after = len(shell.faces)
+    pruned, removed = prune_interior_partitions(mesh, ray_count=800)
+    faces_after = len(pruned.faces)
 
     assert removed > 0
     assert faces_after < faces_before
-    assert np.allclose(shell.extents, mesh.extents, rtol=0.05)
+    assert np.allclose(pruned.extents, mesh.extents, rtol=0.05)
 
 
-def test_extract_shell_keeps_full_exterior_on_sparse_rays():
-    """Low ray counts must not carve holes in the exterior shell."""
-    mesh = repair_mesh(box_with_interior_wall())
-    for _ in range(3):
-        mesh = mesh.subdivide()
-    mesh = repair_mesh(mesh)
+def test_prune_keeps_panelized_exterior_components():
+    mesh = repair_mesh(ca_style_panelized_house())
+    components_before = len(mesh.split(only_watertight=False))
 
-    shell, removed = extract_exterior_shell(mesh, ray_count=300)
+    pruned, removed = prune_interior_partitions(mesh, ray_count=400)
 
-    assert removed > 0
-    assert len(shell.faces) >= len(mesh.faces) * 0.45
-    assert np.allclose(shell.extents, mesh.extents, rtol=0.05)
+    assert len(pruned.split(only_watertight=False)) >= components_before - 2
+    assert len(pruned.faces) >= len(mesh.faces) * 0.85
+    assert np.allclose(pruned.extents, mesh.extents, rtol=0.05)
 
 
-def test_solidify_preserves_footprint():
-    mesh = repair_mesh(box_with_interior_wall())
+def test_solidify_preserves_footprint_and_merges_components():
+    mesh = repair_mesh(ca_style_panelized_house())
     reference = mesh.extents.copy()
-    solid = solidify_mesh(mesh, voxels_per_axis=48, reference_extents=reference)
+    solid = solidify_mesh(mesh, voxels_per_axis=64, reference_extents=reference)
 
     assert len(solid.faces) > 0
     assert solid.is_watertight
-    assert np.allclose(solid.extents[:2], reference[:2], rtol=0.12)
+    assert len(solid.split(only_watertight=False)) == 1
+    assert np.allclose(solid.extents[:2], reference[:2], rtol=0.1)
 
 
 def test_process_mesh_bytes_round_trip():
@@ -96,8 +117,8 @@ def test_process_mesh_bytes_round_trip():
 
     result = process_mesh_bytes(stl_bytes, "stl")
 
-    assert result.faces_removed > 0
     assert len(result.stl_bytes) > 0
+    assert result.faces_after > result.faces_before
 
     reloaded = load_mesh(result.stl_bytes, "stl")
     assert len(reloaded.faces) == result.faces_after
@@ -119,16 +140,16 @@ def test_obj_group_name_fast_path():
     assert len(loaded.faces) < len(exterior.faces) + len(interior.faces)
 
 
-def test_l_shaped_shell_drops_interior_partition():
+def test_l_shaped_shell_prunes_interior_partition():
     try:
         mesh = repair_mesh(l_shaped_shell_with_partition())
     except Exception:
         # Manifold boolean may be unavailable in some environments.
         return
 
-    shell, removed = extract_exterior_shell(mesh, ray_count=1000)
+    pruned, removed = prune_interior_partitions(mesh, ray_count=1000)
     assert removed > 0
-    assert len(shell.faces) > 0
+    assert len(pruned.faces) > 0
 
 
 def test_cull_below_ground_removes_basement():
