@@ -1,27 +1,12 @@
 "use client";
 
-import dynamic from "next/dynamic";
 import { useEffect, useMemo, useState } from "react";
 import { HelpSidebar } from "@/components/HelpSidebar";
+import { ModelViewer } from "@/components/ModelViewer";
 import { StatsPanel } from "@/components/StatsPanel";
 import { UploadDropzone } from "@/components/UploadDropzone";
 import { base64ToBlobUrl, processModel, stageLabel } from "@/lib/process";
 import type { ProcessStats, ProcessingStage } from "@/lib/types";
-
-const ModelViewer = dynamic(
-  () => import("@/components/ModelViewer").then((mod) => mod.ModelViewer),
-  {
-    ssr: false,
-    loading: () => (
-      <div className="viewer-card">
-        <header>Loading viewer…</header>
-        <div className="viewer-canvas muted" style={{ padding: "1rem" }}>
-          Preparing 3D preview…
-        </div>
-      </div>
-    ),
-  },
-);
 
 export default function HomePage() {
   const [stage, setStage] = useState<ProcessingStage>("idle");
