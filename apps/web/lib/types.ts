@@ -4,6 +4,8 @@ export type ProcessStats = {
   facesRemoved: number;
   componentsRemoved: number;
   processingMs: number;
+  groundFloorZ?: number;
+  ceilingZ?: number;
 };
 
 export type ProcessResponse = ProcessStats & {
@@ -13,13 +15,29 @@ export type ProcessResponse = ProcessStats & {
 export type ProcessingStage =
   | "idle"
   | "uploading"
-  | "analyzing"
-  | "culling"
-  | "exporting"
+  | "loading"
+  | "repairing"
+  | "removing_site"
+  | "slicing_floor"
+  | "pruning_interior"
+  | "extruding_solid"
+  | "complete"
   | "done"
   | "error";
 
-export type ViewMode = "original" | "processed";
+export type JobStatus = "queued" | "running" | "complete" | "failed";
+
+export type JobPollResponse = {
+  jobId: string;
+  status: JobStatus;
+  stage: string;
+  progress: number;
+  previewStlBase64: string | null;
+  error: string | null;
+  result: ProcessResponse | null;
+};
+
+export type ViewMode = "original" | "processed" | "live";
 
 export type WorkerHealth = "checking" | "online" | "offline";
 

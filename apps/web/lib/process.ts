@@ -1,20 +1,47 @@
-import type { ApiErrorPayload, AppError, ProcessResponse, ProcessingStage } from "@/lib/types";
+import type {
+  ApiErrorPayload,
+  AppError,
+  JobPollResponse,
+  ProcessResponse,
+  ProcessingStage,
+} from "@/lib/types";
 
 export const PROCESS_STEPS: { id: ProcessingStage; label: string }[] = [
   { id: "uploading", label: "Upload file" },
-  { id: "analyzing", label: "Analyze mesh" },
-  { id: "culling", label: "Remove interior & site geometry" },
-  { id: "exporting", label: "Export printable STL" },
+  { id: "loading", label: "Load model" },
+  { id: "repairing", label: "Repair mesh" },
+  { id: "removing_site", label: "Remove site clutter" },
+  { id: "slicing_floor", label: "Slice at ground floor" },
+  { id: "pruning_interior", label: "Remove interior walls" },
+  { id: "extruding_solid", label: "Extrude floor plan to ceiling" },
+  { id: "complete", label: "Finish export" },
 ];
 
 const STAGE_LABELS: Record<ProcessingStage, string> = {
   idle: "Upload a Chief Architect STL or OBJ to begin.",
   uploading: "Sending your model to the server…",
-  analyzing: "Reading geometry and preparing the mesh…",
-  culling: "Keeping the exterior shell and filling the interior into one solid model… Large files may take several minutes.",
-  exporting: "Building the processed STL preview…",
+  loading: "Loading geometry…",
+  repairing: "Repairing mesh…",
+  removing_site: "Removing fences and detached site objects…",
+  slicing_floor: "Detecting ground floor and cutting off basements…",
+  pruning_interior: "Removing interior partitions…",
+  extruding_solid:
+    "Extruding the floor plan upward to the ceiling… Preview updates live.",
+  complete: "Packaging final STL…",
   done: "Processing finished. Review the result in the workspace.",
   error: "Processing failed.",
+};
+
+const WORKER_STAGE_TO_UI: Record<string, ProcessingStage> = {
+  queued: "uploading",
+  loading: "loading",
+  repairing: "repairing",
+  removing_site: "removing_site",
+  slicing_floor: "slicing_floor",
+  pruning_interior: "pruning_interior",
+  extruding_solid: "extruding_solid",
+  complete: "complete",
+  failed: "error",
 };
 
 const DEBUG = process.env.NODE_ENV !== "production";
@@ -27,6 +54,10 @@ function debugLog(...args: unknown[]) {
 
 export function stageLabel(stage: ProcessingStage): string {
   return STAGE_LABELS[stage];
+}
+
+export function mapWorkerStage(stage: string): ProcessingStage {
+  return WORKER_STAGE_TO_UI[stage] ?? "loading";
 }
 
 export class ProcessRequestError extends Error {
@@ -92,62 +123,108 @@ function toAppError(payload: ApiErrorPayload, statusCode: number): AppError {
   };
 }
 
-export async function processModel(file: File): Promise<ProcessResponse> {
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
+
+export type ProcessModelOptions = {
+  onStage?: (stage: ProcessingStage, progress: number) => void;
+  onPreview?: (stlBase64: string) => void;
+};
+
+export async function processModel(
+  file: File,
+  options: ProcessModelOptions = {},
+): Promise<ProcessResponse> {
   debugLog("processModel:start", { name: file.name, bytes: file.size });
   const formData = new FormData();
   formData.append("file", file);
 
-  let response: Response;
+  let createResponse: Response;
   try {
-    debugLog("processModel:POST /api/process");
-    response = await fetch("/api/process", {
+    createResponse = await fetch("/api/jobs", {
       method: "POST",
       body: formData,
     });
   } catch (cause) {
-    debugLog("processModel:network-error", cause);
     throw new ProcessRequestError({
       title: "Could not reach the web API",
-      message: "The browser failed to contact /api/process.",
+      message: "The browser failed to contact /api/jobs.",
       details: cause instanceof Error ? cause.message : undefined,
-      suggestions: [
-        "Refresh the page and try again.",
-        "Confirm the web container is running.",
-      ],
+      suggestions: ["Refresh the page and try again."],
     });
   }
 
-  let payload: ApiErrorPayload & Partial<ProcessResponse & { stl_base64?: string }>;
+  let createPayload: ApiErrorPayload & { jobId?: string };
   try {
-    payload = await response.json();
+    createPayload = await createResponse.json();
   } catch {
     throw new ProcessRequestError({
       title: "Unexpected server response",
-      message: "The server returned a non-JSON response.",
-      statusCode: response.status,
-      suggestions: ["Check the web and mesh-worker container logs."],
+      message: "The server returned a non-JSON response when starting the job.",
+      statusCode: createResponse.status,
     });
   }
 
-  if (!response.ok) {
-    debugLog("processModel:api-error", response.status, payload);
-    throw new ProcessRequestError(toAppError(payload, response.status));
+  if (!createResponse.ok || !createPayload.jobId) {
+    throw new ProcessRequestError(toAppError(createPayload, createResponse.status));
   }
 
-  debugLog("processModel:complete", {
-    facesBefore: payload.facesBefore,
-    facesAfter: payload.facesAfter,
-    processingMs: payload.processingMs,
-  });
+  const jobId = createPayload.jobId;
+  debugLog("processModel:job", jobId);
 
-  return {
-    stlBase64: payload.stlBase64 ?? "",
-    facesBefore: payload.facesBefore ?? 0,
-    facesAfter: payload.facesAfter ?? 0,
-    facesRemoved: payload.facesRemoved ?? 0,
-    componentsRemoved: payload.componentsRemoved ?? 0,
-    processingMs: payload.processingMs ?? 0,
-  };
+  const deadline = Date.now() + 20 * 60 * 1000;
+  while (Date.now() < deadline) {
+    await sleep(1500);
+
+    let pollResponse: Response;
+    try {
+      pollResponse = await fetch(`/api/jobs/${jobId}`, { cache: "no-store" });
+    } catch (cause) {
+      debugLog("processModel:poll-error", cause);
+      continue;
+    }
+
+    let pollPayload: JobPollResponse & ApiErrorPayload;
+    try {
+      pollPayload = await pollResponse.json();
+    } catch {
+      continue;
+    }
+
+    if (!pollResponse.ok) {
+      throw new ProcessRequestError(toAppError(pollPayload, pollResponse.status));
+    }
+
+    const uiStage = mapWorkerStage(pollPayload.stage);
+    options.onStage?.(uiStage, pollPayload.progress);
+    debugLog("processModel:stage", pollPayload.stage, pollPayload.progress);
+
+    if (pollPayload.previewStlBase64) {
+      options.onPreview?.(pollPayload.previewStlBase64);
+    }
+
+    if (pollPayload.status === "complete" && pollPayload.result) {
+      return pollPayload.result;
+    }
+
+    if (pollPayload.status === "failed") {
+      throw new ProcessRequestError({
+        title: "Processing failed",
+        message: pollPayload.error ?? "The mesh worker reported a failure.",
+        suggestions: ["Check mesh-worker logs for the full traceback."],
+      });
+    }
+  }
+
+  throw new ProcessRequestError({
+    title: "Processing timed out",
+    message: "No result after 20 minutes.",
+    details: "The mesh worker did not finish within the allowed window.",
+    suggestions: ["Check mesh-worker logs — the job may still be running."],
+  });
 }
 
 export async function checkWorkerHealth(): Promise<{ online: boolean; detail: string }> {
@@ -191,9 +268,13 @@ export function stepState(
 ): "complete" | "active" | "pending" | "error" {
   const order: ProcessingStage[] = [
     "uploading",
-    "analyzing",
-    "culling",
-    "exporting",
+    "loading",
+    "repairing",
+    "removing_site",
+    "slicing_floor",
+    "pruning_interior",
+    "extruding_solid",
+    "complete",
     "done",
   ];
 

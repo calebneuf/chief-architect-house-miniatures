@@ -18,6 +18,7 @@ type AppSidebarProps = {
   workerDetail: string;
   viewMode: ViewMode;
   hasProcessed: boolean;
+  hasLive: boolean;
   downloadUrl: string | null;
   downloadName: string;
   onFileSelected: (file: File) => void;
@@ -36,6 +37,7 @@ export function AppSidebar({
   workerDetail,
   viewMode,
   hasProcessed,
+  hasLive,
   downloadUrl,
   downloadName,
   onFileSelected,
@@ -91,6 +93,14 @@ export function AppSidebar({
               onClick={() => onViewModeChange("original")}
             >
               Original
+            </button>
+            <button
+              type="button"
+              className={viewMode === "live" ? "active" : ""}
+              onClick={() => onViewModeChange("live")}
+              disabled={!hasLive}
+            >
+              Live
             </button>
             <button
               type="button"

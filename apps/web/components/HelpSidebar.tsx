@@ -13,7 +13,7 @@ export function HelpSidebar({ compact = false }: HelpSidebarProps) {
           in your active layer set.
         </li>
         <li>Use <strong>File → Export → 3D Model</strong> as OBJ or STL.</li>
-        <li>Upload here to keep the exterior shell and fill the inside into one solid printable model.</li>
+        <li>Upload here to slice at the ground floor, remove interior walls, and extrude a solid printable miniature.</li>
       </ol>
       {!compact ? (
         <p className="muted tiny">

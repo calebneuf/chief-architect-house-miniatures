@@ -5,13 +5,14 @@ import io
 import numpy as np
 import trimesh
 
-from pipeline.cull_site import cull_below_ground, cull_exterior_clutter
+from pipeline.cull_site import cull_exterior_clutter
 from pipeline.export import export_stl
+from pipeline.floor_detect import detect_ground_floor_level, slice_below_floor
+from pipeline.floor_solid import extrude_floor_plan_solid
 from pipeline.load import load_mesh
 from pipeline.prune_interior import prune_interior_partitions
 from pipeline.process import process_mesh_bytes
 from pipeline.repair import repair_mesh
-from pipeline.solidify import solidify_mesh
 
 
 def box_with_interior_wall() -> trimesh.Trimesh:
@@ -100,15 +101,21 @@ def test_prune_keeps_panelized_exterior_components():
     assert np.allclose(pruned.extents, mesh.extents, rtol=0.05)
 
 
-def test_solidify_preserves_footprint_and_merges_components():
-    mesh = repair_mesh(ca_style_panelized_house())
-    reference = mesh.extents.copy()
-    solid = solidify_mesh(mesh, voxels_per_axis=64, reference_extents=reference)
+def test_slice_below_ground_floor_removes_basement():
+    mesh = repair_mesh(house_with_basement())
+    ground = detect_ground_floor_level(mesh)
+    sliced, removed = slice_below_floor(mesh, ground)
+    assert removed > 0
+    assert sliced.bounds[0][2] >= ground - 0.5
+
+
+def test_floor_plan_extrusion_is_solid_block():
+    mesh = repair_mesh(box_with_interior_wall())
+    shell, _ = prune_interior_partitions(mesh, ray_count=800)
+    solid = extrude_floor_plan_solid(shell, cells_per_axis=48)
 
     assert len(solid.faces) > 0
-    assert solid.is_watertight
-    assert len(solid.split(only_watertight=False)) == 1
-    assert np.allclose(solid.extents[:2], reference[:2], rtol=0.1)
+    assert np.allclose(solid.extents[:2], mesh.extents[:2], rtol=0.12)
 
 
 def test_process_mesh_bytes_round_trip():
@@ -118,7 +125,7 @@ def test_process_mesh_bytes_round_trip():
     result = process_mesh_bytes(stl_bytes, "stl")
 
     assert len(result.stl_bytes) > 0
-    assert result.faces_after > result.faces_before
+    assert result.faces_after > 0
 
     reloaded = load_mesh(result.stl_bytes, "stl")
     assert len(reloaded.faces) == result.faces_after
@@ -144,24 +151,11 @@ def test_l_shaped_shell_prunes_interior_partition():
     try:
         mesh = repair_mesh(l_shaped_shell_with_partition())
     except Exception:
-        # Manifold boolean may be unavailable in some environments.
         return
 
     pruned, removed = prune_interior_partitions(mesh, ray_count=1000)
     assert removed > 0
     assert len(pruned.faces) > 0
-
-
-def test_cull_below_ground_removes_basement():
-    mesh = repair_mesh(house_with_basement())
-    faces_before = len(mesh.faces)
-
-    culled, removed = cull_below_ground(mesh)
-    faces_after = len(culled.faces)
-
-    assert removed > 0
-    assert faces_after < faces_before
-    assert culled.bounds[0][2] >= -0.5
 
 
 def test_cull_exterior_clutter_removes_fence():

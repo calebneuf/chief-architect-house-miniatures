@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AppSidebar } from "@/components/AppSidebar";
 import { WorkspaceCanvas } from "@/components/WorkspaceCanvas";
 import {
@@ -18,17 +18,20 @@ export default function HomePage() {
   const [fileName, setFileName] = useState<string | null>(null);
   const [originalUrl, setOriginalUrl] = useState<string | null>(null);
   const [processedUrl, setProcessedUrl] = useState<string | null>(null);
+  const [liveUrl, setLiveUrl] = useState<string | null>(null);
   const [stats, setStats] = useState<ProcessStats | null>(null);
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("original");
   const [workerHealth, setWorkerHealth] = useState<WorkerHealth>("checking");
   const [workerDetail, setWorkerDetail] = useState("Checking connection…");
+  const liveUrlRef = useRef<string | null>(null);
 
   useEffect(() => {
     return () => {
       if (originalUrl) URL.revokeObjectURL(originalUrl);
       if (processedUrl) URL.revokeObjectURL(processedUrl);
       if (downloadUrl) URL.revokeObjectURL(downloadUrl);
+      if (liveUrlRef.current) URL.revokeObjectURL(liveUrlRef.current);
     };
   }, [downloadUrl, originalUrl, processedUrl]);
 
@@ -62,6 +65,16 @@ export default function HomePage() {
     setError(nextError);
   };
 
+  const updateLivePreview = (stlBase64: string) => {
+    const nextLiveUrl = base64ToBlobUrl(stlBase64, "model/stl");
+    if (liveUrlRef.current) {
+      URL.revokeObjectURL(liveUrlRef.current);
+    }
+    liveUrlRef.current = nextLiveUrl;
+    setLiveUrl(nextLiveUrl);
+    setViewMode("live");
+  };
+
   const handleFileSelected = async (file: File) => {
     setError(null);
     setFailedStage(null);
@@ -72,30 +85,37 @@ export default function HomePage() {
     if (originalUrl) URL.revokeObjectURL(originalUrl);
     if (processedUrl) URL.revokeObjectURL(processedUrl);
     if (downloadUrl) URL.revokeObjectURL(downloadUrl);
+    if (liveUrlRef.current) {
+      URL.revokeObjectURL(liveUrlRef.current);
+      liveUrlRef.current = null;
+    }
 
     const nextOriginalUrl = URL.createObjectURL(file);
     setOriginalUrl(nextOriginalUrl);
     setProcessedUrl(null);
+    setLiveUrl(null);
     setDownloadUrl(null);
 
     let currentStage: ProcessingStage = "uploading";
 
     try {
       currentStage = "uploading";
-      console.log("[miniature-prep] stage: uploading", file.name, file.size);
       setStage("uploading");
-      currentStage = "analyzing";
-      console.log("[miniature-prep] stage: analyzing");
-      setStage("analyzing");
-      currentStage = "culling";
-      console.log("[miniature-prep] stage: culling (waiting for mesh worker…)");
-      setStage("culling");
 
-      const result = await processModel(file);
+      const result = await processModel(file, {
+        onStage: (nextStage, progress) => {
+          currentStage = nextStage;
+          setStage(nextStage);
+          console.log("[miniature-prep] stage:", nextStage, `${Math.round(progress * 100)}%`);
+        },
+        onPreview: (stlBase64) => {
+          console.log("[miniature-prep] live preview update");
+          updateLivePreview(stlBase64);
+        },
+      });
 
-      currentStage = "exporting";
-      console.log("[miniature-prep] stage: exporting", result);
-      setStage("exporting");
+      currentStage = "complete";
+      setStage("complete");
       const processedObjectUrl = base64ToBlobUrl(result.stlBase64, "model/stl");
       const downloadableUrl = base64ToBlobUrl(result.stlBase64, "model/stl");
       setProcessedUrl(processedObjectUrl);
@@ -107,9 +127,10 @@ export default function HomePage() {
         facesRemoved: result.facesRemoved,
         componentsRemoved: result.componentsRemoved,
         processingMs: result.processingMs,
+        groundFloorZ: result.groundFloorZ,
+        ceilingZ: result.ceilingZ,
       });
       setStage("done");
-      console.log("[miniature-prep] stage: done");
     } catch (processingError) {
       if (processingError instanceof ProcessRequestError) {
         setFailure(processingError.appError, currentStage);
@@ -134,9 +155,21 @@ export default function HomePage() {
     return `${base}-miniature.stl`;
   }, [fileName]);
 
-  const activeUrl = viewMode === "processed" ? processedUrl : originalUrl;
+  const activeUrl =
+    viewMode === "processed"
+      ? processedUrl
+      : viewMode === "live"
+        ? liveUrl ?? processedUrl
+        : originalUrl;
+
   const activeLabel =
-    viewMode === "processed" ? "Processed miniature" : fileName ? "Original upload" : undefined;
+    viewMode === "processed"
+      ? "Processed miniature"
+      : viewMode === "live"
+        ? "Live preview"
+        : fileName
+          ? "Original upload"
+          : undefined;
 
   return (
     <div className="app-shell">
@@ -151,6 +184,7 @@ export default function HomePage() {
         workerDetail={workerDetail}
         viewMode={viewMode}
         hasProcessed={Boolean(processedUrl)}
+        hasLive={Boolean(liveUrl)}
         downloadUrl={downloadUrl}
         downloadName={downloadName}
         onFileSelected={handleFileSelected}
@@ -170,7 +204,9 @@ export default function HomePage() {
         fileName={
           viewMode === "processed"
             ? "processed.stl"
-            : fileName ?? undefined
+            : viewMode === "live"
+              ? "preview.stl"
+              : fileName ?? undefined
         }
         label={activeLabel}
       />
