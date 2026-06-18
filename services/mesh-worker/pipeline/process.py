@@ -3,11 +3,12 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 
+import numpy as np
 import trimesh
 
-from pipeline.cull_interior import cull_interior_walls, ray_count_for_mesh
 from pipeline.cull_site import cull_below_ground, cull_exterior_clutter, detect_up_axis
 from pipeline.export import export_stl
+from pipeline.exterior_shell import extract_exterior_shell
 from pipeline.load import FileType, load_mesh
 from pipeline.log import get_logger, log_step
 from pipeline.repair import remove_small_components, repair_mesh
@@ -37,50 +38,48 @@ def process_mesh_bytes(data: bytes, file_type: FileType) -> ProcessResult:
     with log_step(logger, "load mesh"):
         mesh = load_mesh(data, file_type)
         faces_before = len(mesh.faces)
+        reference_extents = mesh.extents.copy()
+        up_axis = detect_up_axis(mesh)
+        axis_name = ("X", "Y", "Z")[up_axis]
         logger.debug(
-            "Loaded mesh: faces=%d vertices=%d bounds=%s",
+            "Loaded mesh: faces=%d vertices=%d bounds=%s up=%s",
             faces_before,
             len(mesh.vertices),
             mesh.bounds.tolist(),
+            axis_name,
         )
 
     with log_step(logger, "repair mesh"):
         mesh = repair_mesh(mesh)
+        reference_extents = np.maximum(reference_extents, mesh.extents)
         logger.debug("After repair: faces=%d", len(mesh.faces))
-
-    with log_step(logger, "cull interior walls"):
-        ray_count = ray_count_for_mesh(len(mesh.faces))
-        logger.info("Using %d exterior rays for %s faces", ray_count, f"{len(mesh.faces):,}")
-        mesh, interior_removed = cull_interior_walls(mesh, ray_count=ray_count)
-        logger.info(
-            "Interior cull removed %d faces (%d -> %d)",
-            interior_removed,
-            faces_before,
-            len(mesh.faces),
-        )
-
-    up_axis = detect_up_axis(mesh)
-    axis_name = ("X", "Y", "Z")[up_axis]
-    logger.debug("Detected vertical axis: %s", axis_name)
-
-    with log_step(logger, "cull below ground"):
-        mesh, basement_removed = cull_below_ground(mesh, up_axis=up_axis)
-        logger.info("Below-ground cull removed %d faces", basement_removed)
 
     with log_step(logger, "cull exterior clutter"):
         mesh, site_removed = cull_exterior_clutter(mesh, up_axis=up_axis)
         logger.info("Exterior clutter removed %d detached components", site_removed)
 
+    with log_step(logger, "cull below ground"):
+        mesh, basement_removed = cull_below_ground(mesh, up_axis=up_axis)
+        logger.info("Below-ground cull removed %d faces", basement_removed)
+
+    with log_step(logger, "extract exterior shell"):
+        mesh, interior_removed = extract_exterior_shell(mesh)
+        logger.info(
+            "Exterior shell step removed %d faces (%d remaining)",
+            interior_removed,
+            len(mesh.faces),
+        )
+
     with log_step(logger, "remove small components"):
         mesh, small_removed = remove_small_components(mesh)
         logger.info("Removed %d small floating components", small_removed)
 
-    with log_step(logger, "solidify house"):
-        faces_before_solidify = len(mesh.faces)
-        mesh = solidify_mesh(mesh)
+    with log_step(logger, "fill interior cavity"):
+        faces_before_fill = len(mesh.faces)
+        mesh = solidify_mesh(mesh, reference_extents=reference_extents)
         logger.info(
-            "Solidified mesh: %d -> %d faces",
-            faces_before_solidify,
+            "Cavity fill: %d shell faces -> %d solid faces",
+            faces_before_fill,
             len(mesh.faces),
         )
 

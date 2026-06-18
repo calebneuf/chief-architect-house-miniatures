@@ -5,9 +5,9 @@ import io
 import numpy as np
 import trimesh
 
-from pipeline.cull_interior import cull_interior_walls
 from pipeline.cull_site import cull_below_ground, cull_exterior_clutter
 from pipeline.export import export_stl
+from pipeline.exterior_shell import extract_exterior_shell
 from pipeline.load import load_mesh
 from pipeline.process import process_mesh_bytes
 from pipeline.repair import repair_mesh
@@ -54,37 +54,40 @@ def export_mesh(mesh: trimesh.Trimesh) -> bytes:
     return export_stl(mesh)
 
 
-def test_cull_removes_occluded_interior_wall():
+def test_extract_shell_removes_interior_partition():
     mesh = repair_mesh(box_with_interior_wall())
     faces_before = len(mesh.faces)
 
-    culled, removed = cull_interior_walls(mesh, ray_count=800)
-    faces_after = len(culled.faces)
+    shell, removed = extract_exterior_shell(mesh, ray_count=800)
+    faces_after = len(shell.faces)
 
     assert removed > 0
     assert faces_after < faces_before
-    assert faces_after > 0
+    assert np.allclose(shell.extents, mesh.extents, rtol=0.05)
 
 
-def test_cull_keeps_entire_exterior_shell_when_sparsely_sampled():
-  """Low ray counts must not carve holes in the exterior shell."""
-  mesh = repair_mesh(box_with_interior_wall())
-  for _ in range(3):
-      mesh = mesh.subdivide()
-  mesh = repair_mesh(mesh)
-
-  culled, removed = cull_interior_walls(mesh, ray_count=300)
-
-  assert removed > 0
-  assert len(culled.faces) >= len(mesh.faces) * 0.45
-
-
-def test_solidify_produces_watertight_mesh():
+def test_extract_shell_keeps_full_exterior_on_sparse_rays():
+    """Low ray counts must not carve holes in the exterior shell."""
     mesh = repair_mesh(box_with_interior_wall())
-    solid = solidify_mesh(mesh, voxels_per_axis=48)
+    for _ in range(3):
+        mesh = mesh.subdivide()
+    mesh = repair_mesh(mesh)
+
+    shell, removed = extract_exterior_shell(mesh, ray_count=300)
+
+    assert removed > 0
+    assert len(shell.faces) >= len(mesh.faces) * 0.45
+    assert np.allclose(shell.extents, mesh.extents, rtol=0.05)
+
+
+def test_solidify_preserves_footprint():
+    mesh = repair_mesh(box_with_interior_wall())
+    reference = mesh.extents.copy()
+    solid = solidify_mesh(mesh, voxels_per_axis=48, reference_extents=reference)
 
     assert len(solid.faces) > 0
     assert solid.is_watertight
+    assert np.allclose(solid.extents[:2], reference[:2], rtol=0.12)
 
 
 def test_process_mesh_bytes_round_trip():
@@ -98,6 +101,7 @@ def test_process_mesh_bytes_round_trip():
 
     reloaded = load_mesh(result.stl_bytes, "stl")
     assert len(reloaded.faces) == result.faces_after
+    assert np.allclose(reloaded.extents[:2], mesh.extents[:2], rtol=0.15)
 
 
 def test_obj_group_name_fast_path():
@@ -115,16 +119,16 @@ def test_obj_group_name_fast_path():
     assert len(loaded.faces) < len(exterior.faces) + len(interior.faces)
 
 
-def test_l_shaped_shell_culls_interior_partition():
+def test_l_shaped_shell_drops_interior_partition():
     try:
         mesh = repair_mesh(l_shaped_shell_with_partition())
     except Exception:
         # Manifold boolean may be unavailable in some environments.
         return
 
-    culled, removed = cull_interior_walls(mesh, ray_count=1000)
+    shell, removed = extract_exterior_shell(mesh, ray_count=1000)
     assert removed > 0
-    assert len(culled.faces) > 0
+    assert len(shell.faces) > 0
 
 
 def test_cull_below_ground_removes_basement():

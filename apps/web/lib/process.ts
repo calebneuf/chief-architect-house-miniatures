@@ -11,7 +11,7 @@ const STAGE_LABELS: Record<ProcessingStage, string> = {
   idle: "Upload a Chief Architect STL or OBJ to begin.",
   uploading: "Sending your model to the server…",
   analyzing: "Reading geometry and preparing the mesh…",
-  culling: "Removing interior walls and filling the house into one solid printable model… Large files may take several minutes.",
+  culling: "Keeping the exterior shell and filling the interior into one solid model… Large files may take several minutes.",
   exporting: "Building the processed STL preview…",
   done: "Processing finished. Review the result in the workspace.",
   error: "Processing failed.",
