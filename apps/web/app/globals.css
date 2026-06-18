@@ -340,11 +340,10 @@ button.primary:disabled {
   overflow-y: auto;
 }
 
-.component-row label {
+.component-row {
   display: flex;
   gap: 0.55rem;
   align-items: flex-start;
-  cursor: pointer;
   font-size: 0.86rem;
 }
 
@@ -355,6 +354,44 @@ button.primary:disabled {
 .component-label {
   display: grid;
   gap: 0.1rem;
+}
+
+.component-row.selected .component-label {
+  color: var(--accent-dark);
+}
+
+.component-row.excluded .component-label {
+  opacity: 0.55;
+  text-decoration: line-through;
+}
+
+.component-label[role="button"] {
+  cursor: pointer;
+}
+
+.workspace-hint {
+  position: absolute;
+  top: 1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2;
+  padding: 0.4rem 0.75rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid var(--border);
+  font-size: 0.82rem;
+  backdrop-filter: blur(6px);
+}
+
+.workspace-hint kbd,
+.cleanup-panel kbd {
+  display: inline-block;
+  padding: 0.05rem 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: white;
+  font-size: 0.78rem;
+  font-family: inherit;
 }
 
 .workspace-badge-right {

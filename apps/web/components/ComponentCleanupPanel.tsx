@@ -5,8 +5,10 @@ import type { MeshComponent } from "@/lib/types";
 type ComponentCleanupPanelProps = {
   components: MeshComponent[];
   excludedIds: number[];
+  selectedComponentId?: number | null;
   disabled?: boolean;
   onExcludedChange: (ids: number[]) => void;
+  onSelectComponent?: (id: number | null) => void;
 };
 
 function formatExtents(extents: number[]): string {
@@ -17,8 +19,10 @@ function formatExtents(extents: number[]): string {
 export function ComponentCleanupPanel({
   components,
   excludedIds,
+  selectedComponentId = null,
   disabled = false,
   onExcludedChange,
+  onSelectComponent,
 }: ComponentCleanupPanelProps) {
   const excluded = new Set(excludedIds);
 
@@ -56,28 +60,41 @@ export function ComponentCleanupPanel({
         </button>
       </div>
       <p className="muted tiny">
-        Check parts to remove before processing — fences, trees, detached site objects. This
-        replaces the automatic site-clutter step.
+        Click parts in the preview and press <kbd>Delete</kbd>, or check them here. Remove fences,
+        trees, and detached site objects before processing.
       </p>
       <ul className="component-list">
         {components.map((component, index) => (
-          <li key={component.id} className="component-row">
-            <label>
-              <input
-                type="checkbox"
-                checked={excluded.has(component.id)}
-                disabled={disabled}
-                onChange={() => toggle(component.id)}
-              />
-              <span className="component-label">
-                <strong>
-                  {index === 0 ? "Main shell" : `Part ${component.id + 1}`}
-                </strong>
-                <span className="muted tiny">
-                  {component.faces.toLocaleString()} faces · {formatExtents(component.extents)}
-                </span>
+          <li
+            key={component.id}
+            className={`component-row${selectedComponentId === component.id ? " selected" : ""}${excluded.has(component.id) ? " excluded" : ""}`}
+          >
+            <input
+              type="checkbox"
+              checked={excluded.has(component.id)}
+              disabled={disabled}
+              onChange={() => toggle(component.id)}
+              aria-label={`Remove part ${component.id + 1}`}
+            />
+            <span
+              className="component-label"
+              onClick={() => onSelectComponent?.(component.id)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  onSelectComponent?.(component.id);
+                }
+              }}
+              role="button"
+              tabIndex={0}
+            >
+              <strong>
+                {index === 0 ? "Main shell" : `Part ${component.id + 1}`}
+              </strong>
+              <span className="muted tiny">
+                {component.faces.toLocaleString()} faces · {formatExtents(component.extents)}
               </span>
-            </label>
+            </span>
           </li>
         ))}
       </ul>

@@ -37,6 +37,7 @@ export default function HomePage() {
   const [workerDetail, setWorkerDetail] = useState("Checking connection…");
   const [components, setComponents] = useState<MeshComponent[]>([]);
   const [excludedIds, setExcludedIds] = useState<number[]>([]);
+  const [selectedComponentId, setSelectedComponentId] = useState<number | null>(null);
   const [cleanupReady, setCleanupReady] = useState(false);
   const [manualCleanupUsed, setManualCleanupUsed] = useState(false);
   const [preserveLiveView, setPreserveLiveView] = useState(false);
@@ -99,6 +100,7 @@ export default function HomePage() {
     setCleanupReady(false);
     setManualCleanupUsed(false);
     setExcludedIds([]);
+    setSelectedComponentId(null);
     setComponents([]);
     setProcessedBuffer(null);
     setLiveBuffer(null);
@@ -300,9 +302,11 @@ export default function HomePage() {
         downloadName={downloadName}
         components={components}
         excludedIds={excludedIds}
+        selectedComponentId={selectedComponentId}
         cleanupReady={cleanupReady}
         manualCleanupUsed={manualCleanupUsed}
         onExcludedChange={setExcludedIds}
+        onSelectComponent={setSelectedComponentId}
         onProcess={handleProcess}
         onFileSelected={handleFileSelected}
         onFileRejected={(message) => {
@@ -324,6 +328,12 @@ export default function HomePage() {
         compareLabel={secondaryLabel}
         compareSplit={compareSplit}
         onCompareSplitChange={setCompareSplit}
+        cleanupMode={cleanupReady && !busy && viewMode === "original"}
+        serverComponents={components}
+        excludedIds={excludedIds}
+        selectedComponentId={selectedComponentId}
+        onSelectComponent={setSelectedComponentId}
+        onExcludeComponents={setExcludedIds}
       />
     </div>
   );

@@ -32,9 +32,11 @@ type AppSidebarProps = {
   downloadName: string;
   components: MeshComponent[];
   excludedIds: number[];
+  selectedComponentId?: number | null;
   cleanupReady: boolean;
   manualCleanupUsed: boolean;
   onExcludedChange: (ids: number[]) => void;
+  onSelectComponent?: (id: number | null) => void;
   onProcess: () => void;
   onFileSelected: (file: File) => void;
   onFileRejected: (message: string) => void;
@@ -58,9 +60,11 @@ export function AppSidebar({
   downloadName,
   components,
   excludedIds,
+  selectedComponentId = null,
   cleanupReady,
   manualCleanupUsed,
   onExcludedChange,
+  onSelectComponent,
   onProcess,
   onFileSelected,
   onFileRejected,
@@ -107,8 +111,10 @@ export function AppSidebar({
         <ComponentCleanupPanel
           components={components}
           excludedIds={excludedIds}
+          selectedComponentId={selectedComponentId}
           disabled={busy}
           onExcludedChange={onExcludedChange}
+          onSelectComponent={onSelectComponent}
         />
       ) : null}
 

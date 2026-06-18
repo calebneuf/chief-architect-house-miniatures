@@ -5,6 +5,8 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
 import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
+import { buildCleanupGroup, visibleComponentCount } from "@/lib/meshComponents";
+import type { MeshComponent } from "@/lib/types";
 
 type ModelSource = {
   arrayBuffer?: ArrayBuffer | null;
@@ -20,6 +22,12 @@ type WorkspaceCanvasProps = {
   compareLabel?: string;
   compareSplit?: number;
   onCompareSplitChange?: (split: number) => void;
+  cleanupMode?: boolean;
+  serverComponents?: MeshComponent[];
+  excludedIds?: number[];
+  selectedComponentId?: number | null;
+  onSelectComponent?: (id: number | null) => void;
+  onExcludeComponents?: (ids: number[]) => void;
 };
 
 function fitCameraToObject(
@@ -114,6 +122,38 @@ function loadModelSource(
 }
 
 const LIVE_FADE_MS = 220;
+const SELECTED_EMISSIVE = 0x2a6d9f;
+
+function applyComponentVisuals(
+  root: THREE.Object3D,
+  excludedIds: number[],
+  selectedComponentId: number | null,
+) {
+  const excluded = new Set(excludedIds);
+  root.traverse((child) => {
+    if (!(child instanceof THREE.Mesh)) {
+      return;
+    }
+    const componentId = child.userData.componentId as number | undefined;
+    if (componentId === undefined) {
+      return;
+    }
+
+    child.visible = !excluded.has(componentId);
+    const material = child.material;
+    if (!(material instanceof THREE.MeshStandardMaterial)) {
+      return;
+    }
+
+    if (componentId === selectedComponentId && child.visible) {
+      material.emissive.setHex(SELECTED_EMISSIVE);
+      material.emissiveIntensity = 0.4;
+    } else {
+      material.emissive.setHex(0x000000);
+      material.emissiveIntensity = 0;
+    }
+  });
+}
 
 export function WorkspaceCanvas({
   source,
@@ -123,6 +163,12 @@ export function WorkspaceCanvas({
   compareLabel,
   compareSplit = 0.5,
   onCompareSplitChange,
+  cleanupMode = false,
+  serverComponents = [],
+  excludedIds = [],
+  selectedComponentId = null,
+  onSelectComponent,
+  onExcludeComponents,
 }: WorkspaceCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
@@ -139,6 +185,46 @@ export function WorkspaceCanvas({
   const fadeRafRef = useRef(0);
   const compareModeRef = useRef(false);
   const compareSplitRef = useRef(compareSplit);
+  const cleanupModeRef = useRef(cleanupMode);
+  const excludedIdsRef = useRef(excludedIds);
+  const selectedIdRef = useRef(selectedComponentId);
+  const serverComponentsRef = useRef(serverComponents);
+  const onSelectComponentRef = useRef(onSelectComponent);
+  const onExcludeComponentsRef = useRef(onExcludeComponents);
+  const raycasterRef = useRef(new THREE.Raycaster());
+  const pointerRef = useRef(new THREE.Vector2());
+  const pointerDragRef = useRef(false);
+  const pointerDownRef = useRef({ x: 0, y: 0 });
+
+  useEffect(() => {
+    cleanupModeRef.current = cleanupMode;
+  }, [cleanupMode]);
+
+  useEffect(() => {
+    excludedIdsRef.current = excludedIds;
+  }, [excludedIds]);
+
+  useEffect(() => {
+    selectedIdRef.current = selectedComponentId;
+  }, [selectedComponentId]);
+
+  useEffect(() => {
+    serverComponentsRef.current = serverComponents;
+  }, [serverComponents]);
+
+  useEffect(() => {
+    onSelectComponentRef.current = onSelectComponent;
+  }, [onSelectComponent]);
+
+  useEffect(() => {
+    onExcludeComponentsRef.current = onExcludeComponents;
+  }, [onExcludeComponents]);
+
+  useEffect(() => {
+    if (meshRef.current) {
+      applyComponentVisuals(meshRef.current, excludedIds, selectedComponentId);
+    }
+  }, [excludedIds, selectedComponentId]);
 
   useEffect(() => {
     compareSplitRef.current = compareSplit;
@@ -260,10 +346,113 @@ export function WorkspaceCanvas({
     animate();
     window.addEventListener("resize", resize);
 
+    const pickComponent = (event: PointerEvent) => {
+      if (!cleanupModeRef.current || compareModeRef.current) {
+        return;
+      }
+
+      const camera = cameraRef.current;
+      const scene = sceneRef.current;
+      const root = meshRef.current;
+      const renderer = rendererRef.current;
+      if (!camera || !scene || !root || !renderer) {
+        return;
+      }
+
+      const rect = renderer.domElement.getBoundingClientRect();
+      pointerRef.current.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      pointerRef.current.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+      raycasterRef.current.setFromCamera(pointerRef.current, camera);
+      const pickables: THREE.Object3D[] = [];
+      root.traverse((child) => {
+        if (
+          child instanceof THREE.Mesh &&
+          child.visible &&
+          child.userData.componentId !== undefined
+        ) {
+          pickables.push(child);
+        }
+      });
+
+      const hits = raycasterRef.current.intersectObjects(pickables, false);
+      const hit = hits[0]?.object;
+      const componentId =
+        hit && hit.userData.componentId !== undefined
+          ? (hit.userData.componentId as number)
+          : null;
+      onSelectComponentRef.current?.(componentId);
+    };
+
+    const onPointerDown = (event: PointerEvent) => {
+      pointerDragRef.current = false;
+      pointerDownRef.current = { x: event.clientX, y: event.clientY };
+    };
+
+    const onPointerMove = (event: PointerEvent) => {
+      const deltaX = event.clientX - pointerDownRef.current.x;
+      const deltaY = event.clientY - pointerDownRef.current.y;
+      if (Math.hypot(deltaX, deltaY) > 4) {
+        pointerDragRef.current = true;
+      }
+    };
+
+    const onPointerUp = (event: PointerEvent) => {
+      if (!pointerDragRef.current) {
+        pickComponent(event);
+      }
+    };
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!cleanupModeRef.current || compareModeRef.current) {
+        return;
+      }
+      if (event.key !== "Delete" && event.key !== "Backspace") {
+        return;
+      }
+
+      const target = event.target;
+      if (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement
+      ) {
+        return;
+      }
+
+      const selectedId = selectedIdRef.current;
+      if (selectedId === null || selectedId === undefined) {
+        return;
+      }
+
+      const excluded = excludedIdsRef.current;
+      if (excluded.includes(selectedId)) {
+        return;
+      }
+
+      const total = serverComponentsRef.current.length;
+      if (visibleComponentCount(total, excluded) <= 1) {
+        return;
+      }
+
+      event.preventDefault();
+      onExcludeComponentsRef.current?.([...excluded, selectedId]);
+      onSelectComponentRef.current?.(null);
+    };
+
+    renderer.domElement.addEventListener("pointerdown", onPointerDown);
+    renderer.domElement.addEventListener("pointermove", onPointerMove);
+    renderer.domElement.addEventListener("pointerup", onPointerUp);
+    window.addEventListener("keydown", onKeyDown);
+
     return () => {
       window.cancelAnimationFrame(frameIdRef.current);
       window.cancelAnimationFrame(fadeRafRef.current);
       window.removeEventListener("resize", resize);
+      renderer.domElement.removeEventListener("pointerdown", onPointerDown);
+      renderer.domElement.removeEventListener("pointermove", onPointerMove);
+      renderer.domElement.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("keydown", onKeyDown);
       controls.dispose();
       renderer.dispose();
       if (meshRef.current) {
@@ -305,6 +494,7 @@ export function WorkspaceCanvas({
     loadIdRef.current = loadId;
     const previousMesh = meshRef.current;
     const useCompareMaterial = Boolean(compare);
+    const useCleanupSplit = cleanupMode && serverComponents.length > 0 && !compare;
 
     void loadModelSource(source, material)
       .then((loaded) => {
@@ -313,33 +503,53 @@ export function WorkspaceCanvas({
           return;
         }
 
+        let displayRoot: THREE.Object3D = loaded;
+        if (useCleanupSplit) {
+          displayRoot = buildCleanupGroup(loaded, serverComponents, material);
+          disposeObject(loaded);
+          applyComponentVisuals(displayRoot, excludedIdsRef.current, selectedIdRef.current);
+        }
+
         const shouldPreserveView = preserveView && previousMesh !== null;
         const activeMaterial = useCompareMaterial ? material : material.clone();
-        if (!useCompareMaterial) {
+        if (!useCompareMaterial && !useCleanupSplit) {
           activeMaterial.transparent = true;
           activeMaterial.depthWrite = false;
         }
 
-        loaded.traverse((child) => {
-          if (child instanceof THREE.Mesh) {
-            child.material = activeMaterial;
-          }
-        });
+        if (!useCleanupSplit) {
+          displayRoot.traverse((child) => {
+            if (child instanceof THREE.Mesh) {
+              child.material = activeMaterial;
+            }
+          });
+        }
 
-        scene.add(loaded);
+        scene.add(displayRoot);
 
         if (!shouldPreserveView) {
           if (previousMesh) {
             scene.remove(previousMesh);
             disposeObject(previousMesh);
           }
-          meshRef.current = loaded;
+          meshRef.current = displayRoot;
           if (!compareMeshRef.current) {
-            fitCameraToObject(camera, controls, loaded);
+            fitCameraToObject(camera, controls, displayRoot);
           }
-          activeMaterial.opacity = 1;
-          activeMaterial.transparent = false;
-          activeMaterial.depthWrite = true;
+          if (!useCleanupSplit) {
+            activeMaterial.opacity = 1;
+            activeMaterial.transparent = false;
+            activeMaterial.depthWrite = true;
+          }
+          return;
+        }
+
+        if (useCleanupSplit) {
+          if (previousMesh) {
+            scene.remove(previousMesh);
+            disposeObject(previousMesh);
+          }
+          meshRef.current = displayRoot;
           return;
         }
 
@@ -366,7 +576,7 @@ export function WorkspaceCanvas({
             scene.remove(previousMesh);
             disposeObject(previousMesh);
           }
-          meshRef.current = loaded;
+          meshRef.current = displayRoot;
         };
 
         fadeRafRef.current = window.requestAnimationFrame(fadeStep);
@@ -378,7 +588,7 @@ export function WorkspaceCanvas({
     return () => {
       window.cancelAnimationFrame(fadeRafRef.current);
     };
-  }, [compare, preserveView, source]);
+  }, [cleanupMode, compare, preserveView, serverComponents, source]);
 
   useEffect(() => {
     const scene = sceneRef.current;
@@ -432,12 +642,18 @@ export function WorkspaceCanvas({
 
   const hasSource = Boolean(source?.arrayBuffer || source?.url);
   const showCompareSlider = Boolean(compare && hasSource);
+  const showCleanupHint = Boolean(cleanupMode && hasSource && !compare);
 
   return (
     <div className="workspace-canvas">
       {label ? <div className="workspace-badge">{label}</div> : null}
       {compareLabel && showCompareSlider ? (
         <div className="workspace-badge workspace-badge-right">{compareLabel}</div>
+      ) : null}
+      {showCleanupHint ? (
+        <div className="workspace-hint">
+          Click a part to select · <kbd>Delete</kbd> to remove
+        </div>
       ) : null}
       <div className="workspace-viewport" ref={containerRef}>
         {!hasSource ? (
