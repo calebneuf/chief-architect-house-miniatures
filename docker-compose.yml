@@ -1,0 +1,22 @@
+services:
+  mesh-worker:
+    build:
+      context: ./services/mesh-worker
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  web:
+    build:
+      context: ./apps/web
+    ports:
+      - "3000:3000"
+    environment:
+      MESH_WORKER_URL: http://mesh-worker:8000
+    depends_on:
+      mesh-worker:
+        condition: service_healthy
