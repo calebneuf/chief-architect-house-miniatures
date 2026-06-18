@@ -6,10 +6,10 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
 import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
 
-type ModelViewerProps = {
-  title: string;
+type WorkspaceCanvasProps = {
   url?: string | null;
   fileName?: string;
+  label?: string;
 };
 
 function fitCameraToObject(
@@ -31,7 +31,7 @@ function fitCameraToObject(
   controls.update();
 }
 
-export function ModelViewer({ title, url, fileName }: ModelViewerProps) {
+export function WorkspaceCanvas({ url, fileName, label }: WorkspaceCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -41,7 +41,11 @@ export function ModelViewer({ title, url, fileName }: ModelViewerProps) {
 
     const container = containerRef.current;
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0xe8edf2);
+    scene.background = new THREE.Color(0xd9e1ea);
+
+    const grid = new THREE.GridHelper(40, 40, 0xb8c3cf, 0xc7d0db);
+    grid.position.y = 0;
+    scene.add(grid);
 
     const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 10000);
     const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -51,15 +55,19 @@ export function ModelViewer({ title, url, fileName }: ModelViewerProps) {
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
 
-    const ambient = new THREE.AmbientLight(0xffffff, 0.75);
-    const directional = new THREE.DirectionalLight(0xffffff, 1.1);
-    directional.position.set(5, 8, 4);
-    scene.add(ambient, directional);
+    scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+    const keyLight = new THREE.DirectionalLight(0xffffff, 1.1);
+    keyLight.position.set(6, 10, 4);
+    scene.add(keyLight);
+
+    const fillLight = new THREE.DirectionalLight(0xffffff, 0.45);
+    fillLight.position.set(-5, 4, -6);
+    scene.add(fillLight);
 
     const material = new THREE.MeshStandardMaterial({
-      color: 0x6b7c93,
-      metalness: 0.1,
-      roughness: 0.85,
+      color: 0x6f8098,
+      metalness: 0.08,
+      roughness: 0.82,
     });
 
     let mesh: THREE.Object3D | null = null;
@@ -129,12 +137,14 @@ export function ModelViewer({ title, url, fileName }: ModelViewerProps) {
   }, [fileName, url]);
 
   return (
-    <div className="viewer-card">
-      <header>{title}</header>
-      <div className="viewer-canvas" ref={containerRef}>
+    <div className="workspace-canvas">
+      {label ? <div className="workspace-badge">{label}</div> : null}
+      <div className="workspace-viewport" ref={containerRef}>
         {!url ? (
-          <div className="muted" style={{ padding: "1rem" }}>
-            No model loaded yet.
+          <div className="workspace-empty">
+            <h2>3D workspace</h2>
+            <p>Upload a model in the sidebar to preview it here.</p>
+            <p className="muted">Drag to orbit, scroll to zoom.</p>
           </div>
         ) : null}
       </div>

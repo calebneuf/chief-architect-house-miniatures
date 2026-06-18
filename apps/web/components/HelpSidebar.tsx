@@ -1,31 +1,25 @@
-export function HelpSidebar() {
+type HelpSidebarProps = {
+  compact?: boolean;
+};
+
+export function HelpSidebar({ compact = false }: HelpSidebarProps) {
   return (
-    <div className="panel">
-      <h2>Chief Architect export checklist</h2>
+    <section className={`sidebar-section ${compact ? "help-compact" : ""}`}>
+      <h2>Chief Architect tips</h2>
       <ol className="help-list">
+        <li>Open a <strong>3D camera view</strong> before exporting.</li>
         <li>
-          Open your plan in a <strong>3D camera view</strong> before exporting.
+          Hide <strong>Interior Walls</strong>, <strong>Basement</strong>, fences, and landscaping
+          in your active layer set.
         </li>
-        <li>
-          Create a layer set that hides <strong>Interior Walls</strong>, <strong>Basement</strong>,
-          fences, landscaping, and fixtures you do not want in the miniature.
-        </li>
-        <li>
-          Set that layer set active. Chief Architect only exports geometry visible in the
-          current 3D layer set.
-        </li>
-        <li>
-          Use <strong>File → Export → 3D Model</strong> and choose OBJ or STL.
-        </li>
-        <li>
-          Upload the exported file here. The service removes interior walls, below-ground
-          geometry, and detached exterior objects such as fences when possible.
-        </li>
+        <li>Use <strong>File → Export → 3D Model</strong> as OBJ or STL.</li>
+        <li>Upload here to remove leftover interior and site geometry.</li>
       </ol>
-      <p className="muted" style={{ marginTop: "1rem" }}>
-        Tip: exports with open roofs or cutaway views may keep interior walls because they
-        become visible from outside.
-      </p>
-    </div>
+      {!compact ? (
+        <p className="muted tiny">
+          Open roofs or cutaway views may keep interior walls because they become visible from outside.
+        </p>
+      ) : null}
+    </section>
   );
 }

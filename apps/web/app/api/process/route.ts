@@ -20,9 +20,20 @@ export async function POST(request: NextRequest) {
       method: "POST",
       body: workerFormData,
     });
-  } catch {
+  } catch (cause) {
+    const details = cause instanceof Error ? cause.message : "Connection failed";
     return NextResponse.json(
-      { error: "Mesh worker is unavailable. Start the Python service and try again." },
+      {
+        error: "Mesh worker is unavailable.",
+        code: "WORKER_UNREACHABLE",
+        details: `Could not connect to ${MESH_WORKER_URL}. ${details}`,
+        suggestions: [
+          "Start the mesh-worker container in Dockge and wait for it to become healthy.",
+          "Confirm the web container has MESH_WORKER_URL=http://mesh-worker:8000.",
+          "Open mesh-worker logs and look for Python startup errors.",
+          "From the Unraid terminal, run: docker ps and verify both containers are up.",
+        ],
+      },
       { status: 503 },
     );
   }
@@ -36,7 +47,18 @@ export async function POST(request: NextRequest) {
         : Array.isArray(detail)
           ? detail.map((item: { msg?: string }) => item.msg).filter(Boolean).join(", ")
           : "Mesh processing failed.";
-    return NextResponse.json({ error: message }, { status: response.status });
+    return NextResponse.json(
+      {
+        error: message,
+        code: "WORKER_PROCESSING_FAILED",
+        details: `Worker at ${MESH_WORKER_URL} responded with HTTP ${response.status}.`,
+        suggestions: [
+          "Try a smaller or simpler export from Chief Architect.",
+          "Check mesh-worker logs for the full Python traceback.",
+        ],
+      },
+      { status: response.status },
+    );
   }
 
   return NextResponse.json({

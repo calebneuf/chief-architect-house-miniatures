@@ -50,8 +50,8 @@ export function UploadDropzone({ disabled, onFileSelected, onFileRejected }: Upl
         handleFiles(event.dataTransfer.files);
       }}
     >
-      <p>Drop an STL or OBJ export from Chief Architect here.</p>
-      <p className="muted">Maximum file size: {MAX_UPLOAD_LABEL}</p>
+      <p>Drop STL or OBJ here</p>
+      <p className="muted tiny">Chief Architect export</p>
       <label>
         Choose file
         <input

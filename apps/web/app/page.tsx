@@ -1,21 +1,28 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { HelpSidebar } from "@/components/HelpSidebar";
-import { ModelViewer } from "@/components/ModelViewer";
-import { StatsPanel } from "@/components/StatsPanel";
-import { UploadDropzone } from "@/components/UploadDropzone";
-import { base64ToBlobUrl, processModel, stageLabel } from "@/lib/process";
-import type { ProcessStats, ProcessingStage } from "@/lib/types";
+import { AppSidebar } from "@/components/AppSidebar";
+import { WorkspaceCanvas } from "@/components/WorkspaceCanvas";
+import {
+  base64ToBlobUrl,
+  checkWorkerHealth,
+  processModel,
+  ProcessRequestError,
+} from "@/lib/process";
+import type { AppError, ProcessStats, ProcessingStage, ViewMode, WorkerHealth } from "@/lib/types";
 
 export default function HomePage() {
   const [stage, setStage] = useState<ProcessingStage>("idle");
-  const [error, setError] = useState<string | null>(null);
+  const [failedStage, setFailedStage] = useState<ProcessingStage | null>(null);
+  const [error, setError] = useState<AppError | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
   const [originalUrl, setOriginalUrl] = useState<string | null>(null);
   const [processedUrl, setProcessedUrl] = useState<string | null>(null);
   const [stats, setStats] = useState<ProcessStats | null>(null);
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<ViewMode>("original");
+  const [workerHealth, setWorkerHealth] = useState<WorkerHealth>("checking");
+  const [workerDetail, setWorkerDetail] = useState("Checking connection…");
 
   useEffect(() => {
     return () => {
@@ -25,12 +32,41 @@ export default function HomePage() {
     };
   }, [downloadUrl, originalUrl, processedUrl]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    async function refreshHealth() {
+      setWorkerHealth("checking");
+      const result = await checkWorkerHealth();
+      if (cancelled) {
+        return;
+      }
+      setWorkerHealth(result.online ? "online" : "offline");
+      setWorkerDetail(result.detail);
+    }
+
+    refreshHealth();
+    const interval = window.setInterval(refreshHealth, 15000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, []);
+
   const busy = stage !== "idle" && stage !== "done" && stage !== "error";
+
+  const setFailure = (nextError: AppError, atStage: ProcessingStage) => {
+    setStage("error");
+    setFailedStage(atStage);
+    setError(nextError);
+  };
 
   const handleFileSelected = async (file: File) => {
     setError(null);
+    setFailedStage(null);
     setStats(null);
     setFileName(file.name);
+    setViewMode("original");
 
     if (originalUrl) URL.revokeObjectURL(originalUrl);
     if (processedUrl) URL.revokeObjectURL(processedUrl);
@@ -41,20 +77,25 @@ export default function HomePage() {
     setProcessedUrl(null);
     setDownloadUrl(null);
 
+    let currentStage: ProcessingStage = "uploading";
+
     try {
+      currentStage = "uploading";
       setStage("uploading");
-      await new Promise((resolve) => setTimeout(resolve, 150));
+      currentStage = "analyzing";
       setStage("analyzing");
-      await new Promise((resolve) => setTimeout(resolve, 150));
+      currentStage = "culling";
       setStage("culling");
 
       const result = await processModel(file);
 
+      currentStage = "exporting";
       setStage("exporting");
       const processedObjectUrl = base64ToBlobUrl(result.stlBase64, "model/stl");
       const downloadableUrl = base64ToBlobUrl(result.stlBase64, "model/stl");
       setProcessedUrl(processedObjectUrl);
       setDownloadUrl(downloadableUrl);
+      setViewMode("processed");
       setStats({
         facesBefore: result.facesBefore,
         facesAfter: result.facesAfter,
@@ -64,11 +105,19 @@ export default function HomePage() {
       });
       setStage("done");
     } catch (processingError) {
-      setStage("error");
-      setError(
-        processingError instanceof Error
-          ? processingError.message
-          : "Processing failed.",
+      if (processingError instanceof ProcessRequestError) {
+        setFailure(processingError.appError, currentStage);
+        return;
+      }
+      setFailure(
+        {
+          title: "Processing failed",
+          message:
+            processingError instanceof Error
+              ? processingError.message
+              : "An unexpected error occurred.",
+        },
+        currentStage,
       );
     }
   };
@@ -79,58 +128,46 @@ export default function HomePage() {
     return `${base}-miniature.stl`;
   }, [fileName]);
 
+  const activeUrl = viewMode === "processed" ? processedUrl : originalUrl;
+  const activeLabel =
+    viewMode === "processed" ? "Processed miniature" : fileName ? "Original upload" : undefined;
+
   return (
-    <main className="page">
-      <section className="hero">
-        <h1>House Miniature Prep</h1>
-        <p>
-          Upload a Chief Architect STL or OBJ export and prepare an above-ground exterior
-          miniature by removing interior walls, basements, and site clutter.
-        </p>
-      </section>
-
-      <div className="layout">
-        <section className="panel">
-          <h2>Upload and process</h2>
-          <UploadDropzone
-            disabled={busy}
-            onFileSelected={handleFileSelected}
-            onFileRejected={(message) => {
-              setError(message);
-              setStage("error");
-            }}
-          />
-          <p className={`status ${stage === "error" ? "error" : ""}`}>
-            {error ?? stageLabel(stage)}
-          </p>
-
-          <div className="viewer-grid">
-            <ModelViewer title="Original" url={originalUrl} fileName={fileName ?? undefined} />
-            <ModelViewer
-              title="Processed"
-              url={processedUrl}
-              fileName={processedUrl ? "processed.stl" : undefined}
-            />
-          </div>
-
-          <div className="actions">
-            {downloadUrl ? (
-              <a className="primary" href={downloadUrl} download={downloadName}>
-                Download STL
-              </a>
-            ) : (
-              <button className="primary" type="button" disabled>
-                Download STL
-              </button>
-            )}
-          </div>
-        </section>
-
-        <aside style={{ display: "grid", gap: "1rem", alignContent: "start" }}>
-          <StatsPanel stats={stats} />
-          <HelpSidebar />
-        </aside>
-      </div>
-    </main>
+    <div className="app-shell">
+      <AppSidebar
+        busy={busy}
+        stage={stage}
+        error={error}
+        failedStage={failedStage}
+        fileName={fileName}
+        stats={stats}
+        workerHealth={workerHealth}
+        workerDetail={workerDetail}
+        viewMode={viewMode}
+        hasProcessed={Boolean(processedUrl)}
+        downloadUrl={downloadUrl}
+        downloadName={downloadName}
+        onFileSelected={handleFileSelected}
+        onFileRejected={(message) => {
+          setFailure(
+            {
+              title: "Upload rejected",
+              message,
+            },
+            "uploading",
+          );
+        }}
+        onViewModeChange={setViewMode}
+      />
+      <WorkspaceCanvas
+        url={activeUrl}
+        fileName={
+          viewMode === "processed"
+            ? "processed.stl"
+            : fileName ?? undefined
+        }
+        label={activeLabel}
+      />
+    </div>
   );
 }

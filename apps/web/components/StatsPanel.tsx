@@ -2,45 +2,46 @@ import type { ProcessStats } from "@/lib/types";
 
 type StatsPanelProps = {
   stats: ProcessStats | null;
+  compact?: boolean;
 };
 
-export function StatsPanel({ stats }: StatsPanelProps) {
+export function StatsPanel({ stats, compact = false }: StatsPanelProps) {
   if (!stats) {
     return (
-      <div className="panel">
-        <h2>Processing stats</h2>
-        <p className="muted">Upload a model to see triangle counts and timing.</p>
-      </div>
+      <section className="sidebar-section">
+        <h2>Results</h2>
+        <p className="muted">Triangle counts and timing appear here after processing.</p>
+      </section>
     );
   }
 
   return (
-    <div className="panel">
-      <h2>Processing stats</h2>
+    <section className={`sidebar-section ${compact ? "compact-stats" : ""}`}>
+      <h2>Results</h2>
       <div className="stats">
         <div className="stat">
-          <span className="muted">Triangles before</span>
+          <span className="muted">Before</span>
           <strong>{stats.facesBefore.toLocaleString()}</strong>
         </div>
         <div className="stat">
-          <span className="muted">Triangles after</span>
+          <span className="muted">After</span>
           <strong>{stats.facesAfter.toLocaleString()}</strong>
         </div>
         <div className="stat">
-          <span className="muted">Faces removed</span>
+          <span className="muted">Removed</span>
           <strong>{stats.facesRemoved.toLocaleString()}</strong>
         </div>
         <div className="stat">
-          <span className="muted">Processing time</span>
+          <span className="muted">Time</span>
           <strong>{stats.processingMs} ms</strong>
         </div>
       </div>
       {stats.componentsRemoved > 0 ? (
-        <p className="muted" style={{ marginTop: "0.75rem" }}>
-          Removed {stats.componentsRemoved} small floating component
+        <p className="muted tiny">
+          Removed {stats.componentsRemoved} detached component
           {stats.componentsRemoved === 1 ? "" : "s"}.
         </p>
       ) : null}
-    </div>
+    </section>
   );
 }
